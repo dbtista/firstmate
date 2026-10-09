@@ -2108,7 +2108,18 @@ fm_backend_herdr_project_workspace_ensure() {  # <session> <cwd> <project-label>
 # home workspace itself; the home workspace is still resolved/created first
 # exactly as without a project label, and its id remains available to the
 # caller via the FM_BACKEND_HERDR_WS_ID global side-effect. Omit it (or pass
-# an empty string) to get the unchanged home-only container.
+# an empty string) to get the unchanged home-only container. A failed or
+# refused project-workspace ensure (including the ambiguous-multi-match
+# refusal) degrades to the already-resolved home container with a warning,
+# the same recoverable-layout-nicety treatment its sibling call sites in
+# fm-spawn.sh give it, rather than failing the whole container ensure. A
+# degrade appends a THIRD tab-separated field, the literal "degraded", to the
+# echoed line - the caller runs inside a $(...) command substitution, so the
+# FM_BACKEND_HERDR_PROJECT_WS_ID global this degrade leaves empty never
+# survives back to it; the field is how a project-label caller tells a
+# degrade apart from a genuine project-workspace container without that
+# global. A caller with no project label, or whose project ensure succeeded,
+# never sees this third field.
 fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-relationship>] [<session>] [<project-label>]
   local cwd=${1:-$PWD} relationship=${2:-launcher-home} session=${3:-} project_label=${4:-} label status
   fm_backend_herdr_version_check || return 1
@@ -2128,10 +2139,15 @@ fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-
     return 0
   fi
   fm_backend_herdr_project_workspace_ensure "$session" "$cwd" "$project_label" >/dev/null && status=0 || status=$?
-  [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ] || [ -z "$FM_BACKEND_HERDR_PROJECT_WS_ID" ]; then
-    echo "error: failed to ensure herdr project workspace '$project_label' in session '$session'" >&2
-    return 1
+    # A 3 already reported the exact refusal (e.g. ambiguous multi-match) on
+    # stderr; a plain 1 is a failed/unparseable herdr call. Either way this is
+    # a recoverable layout nicety, not a reason to lose the task spawn, so
+    # degrade to the home container already resolved above - mirroring the
+    # presentation-enabled and control-plane-rebind call sites in fm-spawn.sh.
+    echo "warning: herdr project grouping could not be ensured for '$project_label' in session '$session'; using the home workspace instead" >&2
+    printf '%s:%s\t%s\tdegraded' "$session" "$FM_BACKEND_HERDR_WS_ID" "$FM_BACKEND_HERDR_WS_SEEDED_TAB_ID"
+    return 0
   fi
   printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_PROJECT_WS_ID" "$FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID"
 }

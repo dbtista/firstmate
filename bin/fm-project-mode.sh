@@ -134,9 +134,10 @@ fi
 # awk emits one "near <token>" line per keyed token whose key is a near miss of
 # `forge`, then "posture <mode> <yolo> <forge> <herdr-group> <branch-prefix>"
 # (forge is `none` or the whole `forge=<value>` token, so an empty value
-# survives the split; herdr-group is `on` or `off`; branch-prefix is the raw
-# prefix, defaulting to "fm/", and is printed LAST so an empty override
-# survives as an empty final field), or nothing if the project is absent.
+# survives the split; herdr-group is `off` or the whole `herdr-group=<value>`
+# token, for the same reason; branch-prefix is the raw prefix, defaulting to
+# "fm/", and is printed LAST so an empty override survives as an empty final
+# field), or nothing if the project is absent.
 # Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
 parsed=$(awk -v n="$NAME" '
@@ -180,7 +181,7 @@ parsed=$(awk -v n="$NAME" '
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
-        if (a[j] ~ /^herdr-group=/) { hg = substr(a[j], 13); continue }
+        if (a[j] ~ /^herdr-group=/) { hg = a[j]; continue }
         if (a[j] ~ /^[^=]+=/) {
           key = substr(a[j], 1, index(a[j], "=") - 1);
           e = dist(key, "forge");
@@ -227,7 +228,7 @@ case "$mode" in
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
-case "$herdr_group" in on) ;; *) herdr_group=off ;; esac
+case "$herdr_group" in on|herdr-group=on) herdr_group=on ;; *) herdr_group=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   echo "$branch"
   exit 0

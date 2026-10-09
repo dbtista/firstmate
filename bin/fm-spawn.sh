@@ -3935,8 +3935,20 @@ else
               if fm_backend_herdr_project_workspace_ensure \
                    "$HERDR_SES" "$PROJ_ABS" "$HERDR_PROJECT_LABEL_CANDIDATE"; then
                 HERDR_PROJECT_WORKSPACE_ID=$FM_BACKEND_HERDR_PROJECT_WS_ID
-                fm_backend_herdr_projection_order_best_effort \
-                  "$HERDR_SES" "$HERDR_PROJECT_WORKSPACE_ID" "$HERDR_HOME_PARENT_LABEL" "$HERDR_HOME_PARENT_WORKSPACE_ID"
+                # Ordering only applies to a FRESHLY created project workspace
+                # (fm_backend_herdr_projection_order_best_effort's own analysis
+                # only succeeds when its target is the last workspace in the
+                # list). An ADOPTED project workspace - every spawn after the
+                # first into the same project - already sits wherever the
+                # first spawn placed it, so re-running the analysis against it
+                # only ever finds it no longer last and prints a spurious
+                # "ambiguous" warning. Mirror the home tier's own
+                # found-vs-created convention: skip the call when
+                # FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID is empty (adopted).
+                if [ -n "$FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID" ]; then
+                  fm_backend_herdr_projection_order_best_effort \
+                    "$HERDR_SES" "$HERDR_PROJECT_WORKSPACE_ID" "$HERDR_HOME_PARENT_LABEL" "$HERDR_HOME_PARENT_WORKSPACE_ID"
+                fi
                 HERDR_PARENT_WORKSPACE_ID=$HERDR_PROJECT_WORKSPACE_ID
                 HERDR_PARENT_LABEL=$HERDR_PROJECT_LABEL_CANDIDATE
               else
@@ -3991,19 +4003,39 @@ else
       HERDR_FLAT_PROJECT_LABEL=""
       [ "$HERDR_PROJECT_GROUP" = on ] && HERDR_FLAT_PROJECT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_project_workspace_label "$PROJ_ABS")
       HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP" "" "$HERDR_FLAT_PROJECT_LABEL") || exit 1
-      # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
-      # (the second field empty when this call ADOPTED a pre-existing workspace
-      # rather than creating a fresh one). Split on the guaranteed single tab
-      # character; the seeded tab id is threaded through to create_task
-      # untouched, which is the only function permitted to prune it (never
-      # re-derived from labels - see docs/herdr-backend.md "Default-tab prune").
-      # With HERDR_FLAT_PROJECT_LABEL set, the container is the PROJECT
-      # workspace (docs/herdr-backend.md "Project grouping"), not the home one.
+      # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>",
+      # plus a third tab-separated field, the literal "degraded", exactly when a
+      # requested project label could not be ensured and it fell back to the
+      # home container instead (the second field is empty when this call
+      # ADOPTED a pre-existing workspace rather than creating a fresh one).
+      # This call runs inside a $(...) subshell, so the
+      # FM_BACKEND_HERDR_PROJECT_WS_ID global the ensure sets is never visible
+      # out here, and the third field is what stands in for it. Splitting is
+      # done with explicit substring matches on a literal tab, NOT `read`
+      # (even with IFS narrowed to a bare tab): bash still classifies tab as
+      # IFS whitespace, so `read` silently collapses an empty middle field -
+      # the exact bug already fixed once in fm-project-mode.sh's awk/read
+      # parse of herdr-group. The seeded tab id is threaded through to
+      # create_task untouched, which is the only function permitted to prune
+      # it (never re-derived from labels - see docs/herdr-backend.md
+      # "Default-tab prune").
       CONTAINER=${HERDR_CONTAINER_RAW%%$'\t'*}
-      HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
+      HERDR_CONTAINER_REST=${HERDR_CONTAINER_RAW#*$'\t'}
+      HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_REST%%$'\t'*}
+      if [ "$HERDR_CONTAINER_REST" = "$HERDR_SEEDED_DEFAULT_TAB_ID" ]; then
+        HERDR_PROJECT_CONTAINER_DEGRADED=""
+      else
+        HERDR_PROJECT_CONTAINER_DEGRADED=${HERDR_CONTAINER_REST#*$'\t'}
+      fi
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      [ -z "$HERDR_FLAT_PROJECT_LABEL" ] || HERDR_PROJECT_WORKSPACE_ID=$HERDR_WORKSPACE_ID
+      # With HERDR_FLAT_PROJECT_LABEL set, the container is the PROJECT
+      # workspace (docs/herdr-backend.md "Project grouping"), not the home one
+      # - unless the "degraded" field above says this fell back to the home
+      # container on a failed/refused project ensure.
+      if [ -n "$HERDR_FLAT_PROJECT_LABEL" ] && [ -z "$HERDR_PROJECT_CONTAINER_DEGRADED" ]; then
+        HERDR_PROJECT_WORKSPACE_ID=$HERDR_WORKSPACE_ID
+      fi
       HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
