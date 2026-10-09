@@ -443,6 +443,138 @@ lab pane get "$UNIQB_PANE" >/dev/null 2>&1 || fail "teardown closed an unrelated
 [ "$(label_of_workspace "$WS_PRIMARY_DUP")" = firstmate ] || fail "teardown removed or renamed the launcher's workspace"
 pass "real herdr E2E: teardown closes only the worker's own pane and leaves the launcher, its workspace, and the same-labeled sibling intact"
 
+# --- 9. herdr-group=on composes with presentation spaces: the project's own
+#        workspace becomes the projected child's owning parent, ordered
+#        immediately after the launcher's exact home workspace, in place of
+#        the home workspace itself (docs/herdr-backend.md "Project grouping")
+
+PROJ_NAME=$(basename "$PROJ")
+cat > "$PRES_HOME/data/projects.md" <<EOF
+- $PROJ_NAME [no-mistakes herdr-group=on] - scratch project with grouping on (added 2026-01-01)
+EOF
+mkdir -p "$PRES_HOME/data/presG"
+write_ship_brief "$PRES_HOME/data/presG/brief.md" presG
+
+spawn_from_launcher "$LAUNCH_PRIMARY_PANE" "$PRES_HOME" presG "$PROJ" --mode no-mistakes --yolo off
+[ "$SPAWN_RC" -eq 0 ] || fail "a herdr-group=on presentation spawn from a launcher pane failed"$'\n'"$(cat "$SPAWN_ERR")"
+PRESG_META="$PRES_HOME/state/presG.meta"
+record_worktree "$PRESG_META"
+PRESG_PANE=$(grep '^herdr_pane_id=' "$PRESG_META" | cut -d= -f2-)
+PRESG_WS=$(workspace_of_pane "$PRESG_PANE")
+[ -n "$PRESG_WS" ] || fail "could not read presG's workspace"
+
+GROUP_WS=$(grep '^herdr_project_workspace_id=' "$PRESG_META" | cut -d= -f2-)
+[ -n "$GROUP_WS" ] || fail "presG meta did not record a project workspace id"
+[ "$(label_of_workspace "$GROUP_WS")" = "firstmate/$PROJ_NAME" ] \
+  || fail "the project workspace should be labeled 'firstmate/$PROJ_NAME', got '$(label_of_workspace "$GROUP_WS")'"
+[ "$PRESG_WS" != "$WS_PRIMARY" ] && [ "$PRESG_WS" != "$GROUP_WS" ] \
+  || fail "a projected worker must not be collapsed into either the home workspace or its own project workspace"
+
+PRESG_JOURNAL="$PRES_HOME/state/presG.herdr-presentation"
+[ -f "$PRESG_JOURNAL" ] || fail "a herdr-group=on projected spawn did not leave its presentation journal"
+[ "$(journal_field "$PRESG_JOURNAL" version)" = 2 ] \
+  || fail "the herdr-group=on projection did not publish a version 2 binding"$'\n'"$(cat "$PRESG_JOURNAL" 2>/dev/null)"
+[ "$(journal_field "$PRESG_JOURNAL" parent_workspace_id)" = "$GROUP_WS" ] \
+  || fail "the projection should bind the project's own workspace as its owning parent ($GROUP_WS), not the home workspace ($WS_PRIMARY)"
+
+# The ordering primitive (fm_backend_herdr_projection_order_best_effort) places
+# a new projected child immediately after the parent's EXISTING contiguous
+# child block, not necessarily right after the parent itself - presU (section
+# 2b) is already WS_PRIMARY's child there, so the project workspace is
+# expected right after presU's workspace, extending that same block.
+GROUP_ORDER=$(lab workspace list 2>/dev/null | jq -r --arg prior "$PRESU_WS" --arg proj "$GROUP_WS" '
+  [range(0; (.result.workspaces | length)) as $i
+    | {i: $i, id: .result.workspaces[$i].workspace_id}]
+  | ((map(select(.id == $proj)) | .[0].i) - (map(select(.id == $prior)) | .[0].i))')
+[ "$GROUP_ORDER" = 1 ] \
+  || fail "the project workspace should extend the home workspace's existing child block, offset from presU's workspace was '$GROUP_ORDER'"
+CHILD_ORDER=$(lab workspace list 2>/dev/null | jq -r --arg proj "$GROUP_WS" --arg child "$PRESG_WS" '
+  [range(0; (.result.workspaces | length)) as $i
+    | {i: $i, id: .result.workspaces[$i].workspace_id}]
+  | ((map(select(.id == $child)) | .[0].i) - (map(select(.id == $proj)) | .[0].i))')
+[ "$CHILD_ORDER" = 1 ] \
+  || fail "the projected child should be ordered immediately after the project workspace, offset was '$CHILD_ORDER'"
+[ "$(focused_workspace)" = "$WS_OTHER" ] || fail "a herdr-group=on projected spawn stole focus from the captain's workspace"
+pass "real herdr E2E: herdr-group=on composes with presentation spaces - the project's own workspace becomes the projected child's owning parent, ordered right after the home workspace"
+
+# --- 10. a control-plane rebind degrades herdr-group=on back to the flat
+#         layout, with the documented warning, when the project workspace
+#         cannot be re-created exactly - the task itself must not be lost
+#         over a layout nicety (docs/herdr-backend.md "Project grouping") ----
+
+REBIND_HOME="$TMP_ROOT/rebind-home"
+mkdir -p "$REBIND_HOME/state" "$REBIND_HOME/config" "$REBIND_HOME/data/rbA"
+printf 'off\n' > "$REBIND_HOME/config/herdr-presentation-spaces"
+write_ship_brief "$REBIND_HOME/data/rbA/brief.md" rbA
+cat > "$REBIND_HOME/data/projects.md" <<EOF
+- $PROJ_NAME [no-mistakes herdr-group=on] - scratch project with grouping on (added 2026-01-01)
+EOF
+
+# Driven from the launcher pane inside WS_PRIMARY, same as presG above, so the
+# home tier resolves unambiguously by launcher identity despite the two
+# 'firstmate'-labeled workspaces already created in section 3 - this fixture is
+# about the PROJECT tier's own rebind degrade, not the home tier's ambiguity.
+spawn_from_launcher "$LAUNCH_PRIMARY_PANE" "$REBIND_HOME" rbA "$PROJ" --mode no-mistakes --yolo off
+[ "$SPAWN_RC" -eq 0 ] || fail "a fresh herdr-group=on spawn for the rebind fixture failed"$'\n'"$(cat "$SPAWN_ERR")"
+RBA_META="$REBIND_HOME/state/rbA.meta"
+record_worktree "$RBA_META"
+RBA_PANE=$(grep '^herdr_pane_id=' "$RBA_META" | cut -d= -f2-)
+[ -n "$RBA_PANE" ] || fail "rbA meta is missing herdr_pane_id"
+RBA_WS=$(workspace_of_pane "$RBA_PANE")
+[ "$(label_of_workspace "$RBA_WS")" = "firstmate/$PROJ_NAME" ] \
+  || fail "rbA's fresh spawn should land in its project's own workspace, got label '$(label_of_workspace "$RBA_WS")'"
+
+# Force the endpoint to read as PROVEN gone (fm_control_endpoint_absence_verdict),
+# which is what turns a relaunch into a rebind at all.
+lab pane close "$RBA_PANE" >/dev/null 2>&1
+if lab pane get "$RBA_PANE" >/dev/null 2>&1; then
+  fail "rbA's pane did not actually go away"
+fi
+
+# A second workspace sharing the exact project label makes the rebind's own
+# re-resolution ambiguous (fm_backend_herdr_project_workspace_ensure's
+# refusal) - the one failure mode a rebind must degrade from rather than fail
+# outright.
+read -r RBA_DUP_GROUP_WS _ _ <<EOF
+$(make_workspace "firstmate/$PROJ_NAME")
+EOF
+[ -n "$RBA_DUP_GROUP_WS" ] || fail "could not create the duplicate project-labeled workspace"
+
+RELAUNCH_ERR="$TMP_ROOT/rbA-relaunch.err"
+# Relaunched from the same launcher pane, for the same reason as the fresh
+# spawn above: the home tier must resolve by launcher identity, not by the
+# now-ambiguous 'firstmate' label, so only the project tier's own re-resolution
+# is under test here.
+# rbA's fresh spawn went through spawn_from_launcher's raw "sh -c '...'"
+# launch command, which records the lossy basename "sh" as its harness - not
+# a real template, so a bare --relaunch (which defaults to that recorded
+# harness) refuses with "unknown harness 'sh'". --harness is documented as
+# valid alongside --relaunch (fm-spawn.sh's own usage line), so pass a real
+# verified harness name explicitly, same as tests/fm-control-herdr-smoke.test.sh
+# does for its own relaunch; only the rebind/degrade behavior under test here
+# depends on this, not which harness ends up on the replacement pane.
+env HERDR_ENV=1 HERDR_PANE_ID="$LAUNCH_PRIMARY_PANE" HERDR_SESSION="$HERDR_LAB_SESSION" \
+  HERDR_SOCKET_PATH="$LAB_SOCKET" \
+  FM_SPAWN_NO_GUARD=1 FM_HOME="$REBIND_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+  "$ROOT/bin/fm-spawn.sh" rbA --relaunch --harness codex \
+  >"$TMP_ROOT/rbA-relaunch.out" 2>"$RELAUNCH_ERR"
+rc=$?
+[ "$rc" -eq 0 ] || fail "a rebind should still succeed by degrading to the flat layout, not fail outright"$'\n'"$(cat "$RELAUNCH_ERR")"
+assert_contains_local "$(cat "$RELAUNCH_ERR")" \
+  "warning: herdr project grouping could not be re-created for task rbA; using the ordinary flat layout for this reclaim" \
+  "the rebind did not report the expected project-grouping degrade warning"
+
+RBA_META2="$REBIND_HOME/state/rbA.meta"
+RBA_PANE2=$(grep '^herdr_pane_id=' "$RBA_META2" | cut -d= -f2-)
+[ -n "$RBA_PANE2" ] || fail "rbA's rebound meta is missing herdr_pane_id"
+[ "$RBA_PANE2" != "$RBA_PANE" ] || fail "a rebind over a proven-gone endpoint should mint a new pane, not reuse the old one"
+RBA_WS2=$(workspace_of_pane "$RBA_PANE2")
+[ "$RBA_WS2" = "$WS_PRIMARY" ] \
+  || fail "a degraded rebind should land back in the launcher's exact flat home workspace ($WS_PRIMARY), got '$RBA_WS2'"
+[ "$RBA_WS2" != "$RBA_DUP_GROUP_WS" ] \
+  || fail "a degraded rebind must not land in the ambiguous project workspace it could not re-create"
+pass "real herdr E2E: a control-plane rebind degrades herdr-group=on back to the flat home workspace, with the documented warning, when the project workspace cannot be re-created exactly"
+
 if ! cleanup_all; then
   trap - EXIT
   printf 'not ok - isolated Herdr lab teardown failed or the default fleet session changed\n' >&2

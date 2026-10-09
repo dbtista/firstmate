@@ -1909,6 +1909,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     HERDR_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_workspace_id)
     HERDR_TAB_ID=$(fm_meta_get "$RELAUNCH_META" herdr_tab_id)
     HERDR_PANE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_pane_id)
+    HERDR_PROJECT_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_project_workspace_id)
   fi
   # With no explicit harness, a relaunch reuses the harness already recorded
   # for this task. It must NOT fall through to the fresh-spawn config
@@ -3752,6 +3753,24 @@ if [ "$RELAUNCH" -eq 1 ]; then
     HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
     HERDR_SES=${CONTAINER%%:*}
     HERDR_WORKSPACE_ID=${CONTAINER#*:}
+    # Project grouping (docs/herdr-backend.md "Project grouping") on rebind:
+    # mirror the home tier's own non-exact lookup-or-create, since the project
+    # tier carries no cleanup-authority invariant that needs exact positional
+    # verification here either. Unlike a fresh spawn's hard failure on a
+    # container problem, a rebind degrades to the flat layout on any failure
+    # instead of failing the whole reclaim - this seat is standing in for a
+    # dead endpoint, and the task itself must not be lost over a layout nicety.
+    HERDR_REBIND_PROJECT_GROUP=$("$FM_ROOT/bin/fm-project-mode.sh" --herdr-group "$(basename "$PROJ_ABS")" 2>/dev/null) || HERDR_REBIND_PROJECT_GROUP=off
+    if [ "$HERDR_REBIND_PROJECT_GROUP" = on ]; then
+      HERDR_REBIND_PROJECT_LABEL=$(fm_backend_herdr_project_workspace_label "$PROJ_ABS")
+      if fm_backend_herdr_project_workspace_ensure "$HERDR_SES" "$PROJ_ABS" "$HERDR_REBIND_PROJECT_LABEL"; then
+        HERDR_PROJECT_WORKSPACE_ID=$FM_BACKEND_HERDR_PROJECT_WS_ID
+        CONTAINER="$HERDR_SES:$HERDR_PROJECT_WORKSPACE_ID"
+        HERDR_SEEDED_DEFAULT_TAB_ID=$FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID
+      else
+        echo "warning: herdr project grouping could not be re-created for task $ID; using the ordinary flat layout for this reclaim" >&2
+      fi
+    fi
     HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "$W" "$WT" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
     read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
@@ -3803,6 +3822,14 @@ else
       HERDR_LABEL_HOME=$PROJ_ABS
       HERDR_LAUNCHER_RELATIONSHIP=other-home
     fi
+    # Project grouping (docs/herdr-backend.md "Project grouping") applies only
+    # to the primary crew's own workers, never a --secondmate launch (a
+    # different home's own workspace, not a project nested inside this one).
+    HERDR_PROJECT_WORKSPACE_ID=""
+    HERDR_PROJECT_GROUP=off
+    if [ "$KIND" != secondmate ]; then
+      HERDR_PROJECT_GROUP=$("$FM_ROOT/bin/fm-project-mode.sh" --herdr-group "$(basename "$PROJ_ABS")" 2>/dev/null) || HERDR_PROJECT_GROUP=off
+    fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
     if [ "$KIND" != secondmate ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
@@ -3850,6 +3877,10 @@ else
             HERDR_PROJECTION_ABORT_SESSION=$HERDR_SES
             HERDR_PROJECTION_ABORT_TASK_PANE=$HERDR_PANE_ID
             HERDR_PROJECTION_ABORT_SEEDED_PANE=""
+            # A reopened journal reclaims the task's own projected workspace
+            # only; the project workspace it was nested under (if any) is not
+            # re-derived here, just carried forward from the prior record.
+            HERDR_PROJECT_WORKSPACE_ID=$(herdr_projection_meta_field_exact "$STATE/$ID.meta" herdr_project_workspace_id 2>/dev/null) || HERDR_PROJECT_WORKSPACE_ID=""
             ;;
           2)
             spawn_herdr_presentation_order_lock_release
@@ -3890,6 +3921,28 @@ else
             echo "warning: herdr presentation parent is absent or ambiguous; using the ordinary flat layout without projection" >&2
             spawn_herdr_presentation_order_lock_release
           else
+            # Project grouping composes with presentation spaces by swapping
+            # in the project workspace as the "owning parent" the task's own
+            # projected workspace nests under and verifies against, in place
+            # of the home workspace resolved just above. The home anchor
+            # itself (HERDR_PARENT_WORKSPACE_ID/_LABEL as found by launcher
+            # identity or label lookup) is left completely untouched; the
+            # project workspace is only ordered to sit right after it.
+            if [ "$HERDR_PROJECT_GROUP" = on ]; then
+              HERDR_HOME_PARENT_WORKSPACE_ID=$HERDR_PARENT_WORKSPACE_ID
+              HERDR_HOME_PARENT_LABEL=$HERDR_PARENT_LABEL
+              HERDR_PROJECT_LABEL_CANDIDATE=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_project_workspace_label "$PROJ_ABS")
+              if fm_backend_herdr_project_workspace_ensure \
+                   "$HERDR_SES" "$PROJ_ABS" "$HERDR_PROJECT_LABEL_CANDIDATE"; then
+                HERDR_PROJECT_WORKSPACE_ID=$FM_BACKEND_HERDR_PROJECT_WS_ID
+                fm_backend_herdr_projection_order_best_effort \
+                  "$HERDR_SES" "$HERDR_PROJECT_WORKSPACE_ID" "$HERDR_HOME_PARENT_LABEL" "$HERDR_HOME_PARENT_WORKSPACE_ID"
+                HERDR_PARENT_WORKSPACE_ID=$HERDR_PROJECT_WORKSPACE_ID
+                HERDR_PARENT_LABEL=$HERDR_PROJECT_LABEL_CANDIDATE
+              else
+                echo "warning: herdr project grouping could not be ensured; nesting this task under the home workspace instead" >&2
+              fi
+            fi
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
             HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
@@ -3935,17 +3988,22 @@ else
       fi
     fi
     if [ "$HERDR_PROJECTED" -ne 1 ]; then
-      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
+      HERDR_FLAT_PROJECT_LABEL=""
+      [ "$HERDR_PROJECT_GROUP" = on ] && HERDR_FLAT_PROJECT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_project_workspace_label "$PROJ_ABS")
+      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP" "" "$HERDR_FLAT_PROJECT_LABEL") || exit 1
       # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
       # (the second field empty when this call ADOPTED a pre-existing workspace
       # rather than creating a fresh one). Split on the guaranteed single tab
       # character; the seeded tab id is threaded through to create_task
       # untouched, which is the only function permitted to prune it (never
       # re-derived from labels - see docs/herdr-backend.md "Default-tab prune").
+      # With HERDR_FLAT_PROJECT_LABEL set, the container is the PROJECT
+      # workspace (docs/herdr-backend.md "Project grouping"), not the home one.
       CONTAINER=${HERDR_CONTAINER_RAW%%$'\t'*}
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
+      [ -z "$HERDR_FLAT_PROJECT_LABEL" ] || HERDR_PROJECT_WORKSPACE_ID=$HERDR_WORKSPACE_ID
       HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
@@ -5077,7 +5135,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id herdr_project_workspace_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5113,6 +5171,7 @@ preserve_relaunch_meta() {
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
     echo "herdr_tab_id=$HERDR_TAB_ID"
     echo "herdr_pane_id=$HERDR_PANE_ID"
+    [ -z "${HERDR_PROJECT_WORKSPACE_ID:-}" ] || echo "herdr_project_workspace_id=$HERDR_PROJECT_WORKSPACE_ID"
   fi
   if [ "$BACKEND" = zellij ]; then
     echo "zellij_session=$ZELLIJ_SES"

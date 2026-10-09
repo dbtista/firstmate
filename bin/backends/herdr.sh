@@ -369,6 +369,25 @@ fm_backend_herdr_workspace_label() {
   printf 'firstmate'
 }
 
+# fm_backend_herdr_project_workspace_label <project-dir>: the label for an
+# opt-in per-project grouping workspace (docs/herdr-backend.md "Project
+# grouping"), nested under this home's own workspace: "<home-label>/<project-
+# name>", e.g. "firstmate/bitacora" or "2ndmate-xyz/bitacora". The home-label
+# prefix scopes the label to this exact home so two different homes with a
+# same-named project can never collide on one workspace. A literal "·"
+# (middot) in the project name is replaced with "-" so this label can never
+# coincidentally satisfy the presentation-spaces child grammar, which always
+# requires a " · p:<22-char-token>" suffix (fm_backend_herdr_projection_order_best_effort's
+# is_new_child/is_legacy_child) - that suffix is never produced here, so the
+# two label families stay disjoint by construction.
+fm_backend_herdr_project_workspace_label() {  # <project-dir>
+  local proj_dir=${1:-} home_label name
+  home_label=$(fm_backend_herdr_workspace_label)
+  name=$(basename "$proj_dir")
+  name=${name//·/-}
+  printf '%s/%s' "$home_label" "$name"
+}
+
 # fm_backend_herdr_cli: run `herdr <args...>` scoped to <session>, setting
 # BOTH the HERDR_SESSION env var AND appending a trailing `--session <name>`
 # CLI flag. Verified empirically (docs/herdr-backend.md "Session targeting: the
@@ -1507,9 +1526,12 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
       then .workspace_id == $parent_ws
       else (.label | type) == "string" and .label == $parent
       end;
+    def is_project_workspace:
+      (.label | type) == "string"
+      and (.label | test("^(firstmate|2ndmate-[^/]+)/[^/]+$"));
     def is_top_level_parent:
       (.label | type) == "string"
-      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
+      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")) or is_project_workspace);
     def is_new_child:
       (.label | type) == "string"
       and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
@@ -1696,9 +1718,9 @@ fm_backend_herdr_server_ensure() {  # <session>
 # duplicate means for them - fm_backend_herdr_workspace_ensure refuses to guess
 # which one is the caller's, while the read-only recovery path below keeps its
 # historical first-match behavior.
-fm_backend_herdr_workspace_find_all() {  # <session>
-  local session=$1 label list
-  label=$(fm_backend_herdr_workspace_label)
+fm_backend_herdr_workspace_find_all() {  # <session> [<label>]
+  local session=$1 label=${2:-} list
+  [ -n "$label" ] || label=$(fm_backend_herdr_workspace_label)
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 0
   # NOTE: the jq variable is $want, NOT $label - `label` is a jq reserved
   # keyword (label/break), so declaring a jq variable named "label" is a
@@ -1716,8 +1738,8 @@ fm_backend_herdr_workspace_find_all() {  # <session>
 # identical in spirit to the pre-existing tab duplicate-label check below.
 # NOT the spawn-time resolver: placing a new worker by first label match is
 # exactly the defect fm_backend_herdr_workspace_ensure now refuses.
-fm_backend_herdr_workspace_find() {  # <session>
-  fm_backend_herdr_workspace_find_all "$1" | head -1
+fm_backend_herdr_workspace_find() {  # <session> [<label>]
+  fm_backend_herdr_workspace_find_all "$1" "${2:-}" | head -1
 }
 
 # fm_backend_herdr_launcher_identity: the EXACT herdr workspace that the
@@ -2013,6 +2035,53 @@ fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
   printf '%s' "$wsid"
 }
 
+# fm_backend_herdr_project_workspace_ensure: resolve-or-create this project's
+# opt-in grouping workspace (docs/herdr-backend.md "Project grouping") inside
+# <session>, labeled <project-label> (fm_backend_herdr_project_workspace_label).
+# Unlike fm_backend_herdr_workspace_ensure there is no launcher-identity
+# branch: the project tier is a pure label lookup, already scoped to this home
+# by the home-label prefix baked into <project-label>, so a label collision
+# across two different homes' same-named project cannot occur by
+# construction. A label collision WITHIN the same home (two project
+# workspaces ever created with the identical label) is refused exactly like
+# fm_backend_herdr_workspace_ensure's own multi-match refusal, for the same
+# reason: picking one would silently guess.
+# Sets, mirroring fm_backend_herdr_workspace_ensure:
+#   FM_BACKEND_HERDR_PROJECT_WS_ID
+#   FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID
+# Returns 0 on success, 3 for a refused multi-match, 1 for a failed or
+# unparseable herdr call.
+fm_backend_herdr_project_workspace_ensure() {  # <session> <cwd> <project-label>
+  local session=$1 cwd=$2 project_label=$3 matches count wsid out
+  FM_BACKEND_HERDR_PROJECT_WS_ID=""
+  FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID=""
+  matches=$(fm_backend_herdr_workspace_find_all "$session" "$project_label")
+  count=$(printf '%s' "$matches" | grep -c '[^[:space:]]' || true)
+  if [ "$count" -gt 1 ]; then
+    echo "error: ${count} herdr workspaces in session '$session' are labeled '$project_label' (${matches//$'\n'/ }); rename or close the extras" >&2
+    return 3
+  fi
+  wsid=${matches%%$'\n'*}
+  if [ -n "$wsid" ]; then
+    FM_BACKEND_HERDR_PROJECT_WS_ID=$wsid
+    printf '%s' "$wsid"
+    return 0
+  fi
+  out=$(fm_backend_herdr_cli "$session" workspace create --cwd "$cwd" --label "$project_label" --no-focus 2>/dev/null) || return 1
+  wsid=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  [ -n "$wsid" ] || return 1
+  FM_BACKEND_HERDR_PROJECT_WS_ID=$wsid
+  # Same seeded-default-tab contract as fm_backend_herdr_workspace_ensure: not
+  # pruned here, because at this instant it is the workspace's only tab.
+  # Unlike the home tier, a project workspace composed with presentation-spaces
+  # never receives a direct task tab at all (the task's own content lives in a
+  # sibling projected workspace instead), so this seeded tab can simply stay
+  # unpruned forever in that case - harmless, identical to any workspace that
+  # only ever holds one tab.
+  FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
+  printf '%s' "$wsid"
+}
+
 # fm_backend_herdr_container_ensure: the full spawn-time container-ensure
 # sequence (version gate, server, workspace). Echoes
 # "<session>:<workspace_id>\t<seeded_default_tab_id>" - a single TAB character
@@ -2032,8 +2101,16 @@ fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
 # fm_backend_herdr_launcher_identity compares the launcher's own ambient session
 # against this one, and shadowing would make that half of its cross-session
 # guard compare the pinned value with itself and pass vacuously.
-fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-relationship>] [<session>]
-  local cwd=${1:-$PWD} relationship=${2:-launcher-home} session=${3:-} label status
+#
+# <project-label> is optional (docs/herdr-backend.md "Project grouping"). When
+# given, the echoed container is the PROJECT workspace nested under this
+# home's own workspace (fm_backend_herdr_project_workspace_ensure), not the
+# home workspace itself; the home workspace is still resolved/created first
+# exactly as without a project label, and its id remains available to the
+# caller via the FM_BACKEND_HERDR_WS_ID global side-effect. Omit it (or pass
+# an empty string) to get the unchanged home-only container.
+fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-relationship>] [<session>] [<project-label>]
+  local cwd=${1:-$PWD} relationship=${2:-launcher-home} session=${3:-} project_label=${4:-} label status
   fm_backend_herdr_version_check || return 1
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   fm_backend_herdr_server_ensure "$session" || return 1
@@ -2046,7 +2123,17 @@ fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-
     echo "error: failed to ensure herdr workspace '$label' in session '$session'" >&2
     return 1
   fi
-  printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_WS_ID" "$FM_BACKEND_HERDR_WS_SEEDED_TAB_ID"
+  if [ -z "$project_label" ]; then
+    printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_WS_ID" "$FM_BACKEND_HERDR_WS_SEEDED_TAB_ID"
+    return 0
+  fi
+  fm_backend_herdr_project_workspace_ensure "$session" "$cwd" "$project_label" >/dev/null && status=0 || status=$?
+  [ "$status" -ne 3 ] || return 1
+  if [ "$status" -ne 0 ] || [ -z "$FM_BACKEND_HERDR_PROJECT_WS_ID" ]; then
+    echo "error: failed to ensure herdr project workspace '$project_label' in session '$session'" >&2
+    return 1
+  fi
+  printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_PROJECT_WS_ID" "$FM_BACKEND_HERDR_PROJECT_WS_SEEDED_TAB_ID"
 }
 
 # fm_backend_herdr_pane_presence_state: classify one exact pane get response
@@ -2701,6 +2788,9 @@ fm_backend_herdr_projection_cleanup_exact() {  # <session> <task-pane> <seeded-p
 
 # fm_backend_herdr_projection_parent_workspace_exact: resolve one exact parent
 # workspace only when its presentation label is unique in the named session.
+# Deliberately NOT extended for project grouping: this is already a generic
+# exact-label lookup with no hard-coded home-tier assumption, so passing a
+# project workspace's label as <parent-label> works unmodified.
 fm_backend_herdr_projection_parent_workspace_exact() {  # <session> <parent-label>
   local session=$1 parent_label=$2 list
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
@@ -2721,6 +2811,16 @@ fm_backend_herdr_projection_parent_workspace_exact() {  # <session> <parent-labe
 # workspace, its single task tab/pane, its unique token label, and its current
 # position inside the exact parent workspace's contiguous child block.
 # This read-only predicate grants no mutation authority by itself.
+#
+# Deliberately NOT extended for project grouping (docs/herdr-backend.md
+# "Project grouping"): a project workspace can be the exact parent here same
+# as a home workspace, with no code change, because this function's
+# is_new_child is owner-agnostic (it never references $parent_label) and its
+# is_legacy_child_for($owner) only matches the legacy "<owner>/... · p:<token>"
+# format, which a project-tier task child never produces - every task child
+# uses the new-style "└ ... · p:<token>" label regardless of whether its
+# parent is a home or a project workspace, so is_new_child alone already
+# verifies it correctly in both cases.
 fm_backend_herdr_projection_live_binding_matches() {  # <session> <token> <workspace> <tab> <pane> <parent-workspace> <parent-label> <workspace-label> <task-label>
   local session=$1 token=$2 workspace=$3 tab=$4 pane=$5 parent_workspace=$6
   local parent_label=$7 workspace_label=$8 task_label=$9 list tabs panes

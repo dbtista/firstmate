@@ -68,10 +68,12 @@ herdr_forget_inherited_pane
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-e2e.XXXXXX")
 SESSION="fm-lab-herdr-e2e-$$"
 export HERDR_SESSION="$SESSION"
-WT1=; WT2=
+WT1=; WT2=; WT3=; WT4=
 cleanup_all() {
   [ -n "$WT1" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT1" >/dev/null 2>&1
   [ -n "$WT2" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT2" >/dev/null 2>&1
+  [ -n "$WT3" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT3" >/dev/null 2>&1
+  [ -n "$WT4" ] && command -v treehouse >/dev/null 2>&1 && treehouse return --force "$WT4" >/dev/null 2>&1
   herdr_safe_stop_and_delete "$SESSION"
   # Spawn leaves each state/<id>.git-hooks strip dir read-only.
   find "$TMP_ROOT" -type d -exec chmod u+rwx {} + 2>/dev/null
@@ -262,6 +264,115 @@ if ! herdr pane get "$SM_PANE" --session "$SESSION" >/dev/null 2>&1; then
 fi
 WT2=
 pass "real herdr E2E: tearing down cm2 closes only its own tab - the secondmate's own tab (same workspace) survives untouched"
+
+# --- 6. project grouping: herdr-group=on nests a project under its own ---
+# workspace tier; off (unregistered, the default) keeps today's flat shape
+# unchanged (docs/herdr-backend.md "Project grouping").
+
+PROJ1_NAME=$(basename "$PROJ1")
+mkdir -p "$PRIMARY_HOME/data/cm3" "$PRIMARY_HOME/data/cm4"
+cat > "$PRIMARY_HOME/data/cm3/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Exercise herdr-group=on project placement.
+
+## Firstmate spec
+Verify the crewmate uses its project's own nested workspace.
+EOF
+cat > "$PRIMARY_HOME/data/cm4/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Exercise herdr-group off (unregistered) project placement.
+
+## Firstmate spec
+Verify the crewmate keeps landing in the flat home workspace.
+EOF
+cat > "$PRIMARY_HOME/data/projects.md" <<EOF
+- $PROJ1_NAME [no-mistakes herdr-group=on] - scratch project with grouping on (added 2026-01-01)
+EOF
+
+HOOK_OUT="$TMP_ROOT/hook.out"; HOOK_ERR="$TMP_ROOT/hook.err"
+FM_BACKEND=herdr FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_PROJECTS_OVERRIDE="$TMP_ROOT" \
+  "$ROOT/bin/fm-herdr-project-register-hook.sh" "$PROJ1_NAME" >"$HOOK_OUT" 2>"$HOOK_ERR"
+rc=$?
+[ "$rc" -eq 0 ] || fail "fm-herdr-project-register-hook.sh failed for a herdr-group=on project"$'\n'"--- stdout ---"$'\n'"$(cat "$HOOK_OUT")"$'\n'"--- stderr ---"$'\n'"$(cat "$HOOK_ERR")"
+HOOK_WSID=$(cat "$HOOK_OUT")
+[ -n "$HOOK_WSID" ] || fail "the register hook printed no workspace id"
+HOOK_WS_LABEL=$(herdr workspace list --session "$SESSION" 2>&1 | jq -r --arg id "$HOOK_WSID" '.result.workspaces[]? | select(.workspace_id == $id) | .label')
+[ "$HOOK_WS_LABEL" = "firstmate/$PROJ1_NAME" ] || fail "the register hook should create 'firstmate/$PROJ1_NAME', got '$HOOK_WS_LABEL'"
+pass "real herdr E2E: fm-herdr-project-register-hook.sh eagerly creates a project's own workspace when herdr-group=on"
+
+NOOP_OUT="$TMP_ROOT/hook-noop.out"
+FM_BACKEND=herdr FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_PROJECTS_OVERRIDE="$TMP_ROOT" \
+  "$ROOT/bin/fm-herdr-project-register-hook.sh" "$(basename "$PROJ2")" >"$NOOP_OUT" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] || fail "fm-herdr-project-register-hook.sh should no-op (exit 0) for an unregistered project"
+[ -s "$NOOP_OUT" ] && fail "fm-herdr-project-register-hook.sh should print nothing for a project without herdr-group=on, got: $(cat "$NOOP_OUT")"
+pass "real herdr E2E: fm-herdr-project-register-hook.sh no-ops for a project whose herdr-group toggle is off"
+
+CM3_OUT="$TMP_ROOT/cm3.out"; CM3_ERR="$TMP_ROOT/cm3.err"
+FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+  "$ROOT/bin/fm-spawn.sh" cm3 "$PROJ1" "sh -c 'echo grouped-crew-ok'" --mode no-mistakes --yolo off --backend herdr \
+  >"$CM3_OUT" 2>"$CM3_ERR"
+rc=$?
+[ "$rc" -eq 0 ] || fail "a crewmate spawn into a herdr-group=on project failed"$'\n'"--- stdout ---"$'\n'"$(cat "$CM3_OUT")"$'\n'"--- stderr ---"$'\n'"$(cat "$CM3_ERR")"
+
+CM3_META="$PRIMARY_HOME/state/cm3.meta"
+[ -f "$CM3_META" ] || fail "no meta written for cm3"
+WT3=$(grep '^worktree=' "$CM3_META" | cut -d= -f2-)
+CM3_PANE=$(grep '^herdr_pane_id=' "$CM3_META" | cut -d= -f2-)
+[ -n "$CM3_PANE" ] || fail "cm3 meta missing herdr_pane_id"
+assert_contains_local "$(cat "$CM3_META")" "herdr_project_workspace_id=$HOOK_WSID" "cm3 meta should record the eagerly-created project workspace id"
+
+sleep 1
+CM3_CAPTURE=$(fm_backend_herdr_capture "$SESSION:$CM3_PANE" 30) || fail "capture failed on cm3's pane"
+assert_contains_local "$CM3_CAPTURE" "grouped-crew-ok" "cm3's raw launch command did not run in its herdr pane"
+
+CM3_WSID=$(herdr pane get "$CM3_PANE" --session "$SESSION" 2>/dev/null | jq -r '.result.pane.workspace_id // empty')
+[ "$CM3_WSID" = "$HOOK_WSID" ] || fail "a herdr-group=on project's crewmate should land in the project's own workspace ($HOOK_WSID), got '$CM3_WSID'"
+[ "$CM3_WSID" != "$CM1_WSID" ] || fail "a herdr-group=on project's crewmate must NOT land directly in the flat 'firstmate' home workspace"
+pass "real herdr E2E: a crewmate spawned into a herdr-group=on project lands in that project's own nested workspace, not the flat home workspace"
+
+CM4_OUT="$TMP_ROOT/cm4.out"; CM4_ERR="$TMP_ROOT/cm4.err"
+FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+  "$ROOT/bin/fm-spawn.sh" cm4 "$PROJ2" "sh -c 'echo ungrouped-crew-ok'" --mode no-mistakes --yolo off --backend herdr \
+  >"$CM4_OUT" 2>"$CM4_ERR"
+rc=$?
+[ "$rc" -eq 0 ] || fail "a crewmate spawn into an unregistered (herdr-group off) project failed"$'\n'"--- stdout ---"$'\n'"$(cat "$CM4_OUT")"$'\n'"--- stderr ---"$'\n'"$(cat "$CM4_ERR")"
+
+CM4_META="$PRIMARY_HOME/state/cm4.meta"
+[ -f "$CM4_META" ] || fail "no meta written for cm4"
+WT4=$(grep '^worktree=' "$CM4_META" | cut -d= -f2-)
+CM4_PANE=$(grep '^herdr_pane_id=' "$CM4_META" | cut -d= -f2-)
+[ -n "$CM4_PANE" ] || fail "cm4 meta missing herdr_pane_id"
+assert_not_contains_local "$(cat "$CM4_META")" "herdr_project_workspace_id=" "cm4 (toggle off) meta must not record a project workspace id"
+
+CM4_WSID=$(herdr pane get "$CM4_PANE" --session "$SESSION" 2>/dev/null | jq -r '.result.pane.workspace_id // empty')
+[ -n "$CM4_WSID" ] || fail "could not read cm4's pane workspace_id"
+# Compare by LABEL, not by CM1_WSID: cm1's own "firstmate" workspace was
+# closed along with its only tab at teardown (step 5), so by now a fresh
+# "firstmate" workspace (a different id, same label) backs the home tier -
+# exactly what a project-less spawn should still land in.
+CM4_WS_LABEL=$(herdr workspace list --session "$SESSION" 2>&1 | jq -r --arg id "$CM4_WSID" '.result.workspaces[]? | select(.workspace_id == $id) | .label')
+[ "$CM4_WS_LABEL" = "firstmate" ] || fail "a project without herdr-group=on should keep landing flat in the 'firstmate' home workspace, got label '$CM4_WS_LABEL'"
+[ "$CM4_WSID" != "$CM3_WSID" ] || fail "a project without herdr-group=on must NOT land in another project's own grouped workspace"
+pass "real herdr E2E: a project without herdr-group=on keeps today's flat placement unchanged"
+
+TD3_OUT="$TMP_ROOT/td3.out"
+FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
+  FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
+  "$ROOT/bin/fm-teardown.sh" cm3 >"$TD3_OUT" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] || fail "fm-teardown.sh failed for the grouped crewmate cm3"$'\n'"$(cat "$TD3_OUT")"
+WT3=
+TD4_OUT="$TMP_ROOT/td4.out"
+FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
+  FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
+  "$ROOT/bin/fm-teardown.sh" cm4 >"$TD4_OUT" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] || fail "fm-teardown.sh failed for the ungrouped crewmate cm4"$'\n'"$(cat "$TD4_OUT")"
+WT4=
+pass "real herdr E2E: project-grouping crewmates tear down cleanly"
 
 fm_backend_herdr_kill "$SESSION:$SM_PANE"
 
