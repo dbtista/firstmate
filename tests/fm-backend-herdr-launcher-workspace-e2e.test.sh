@@ -573,6 +573,9 @@ RBA_WS2=$(workspace_of_pane "$RBA_PANE2")
   || fail "a degraded rebind should land back in the launcher's exact flat home workspace ($WS_PRIMARY), got '$RBA_WS2'"
 [ "$RBA_WS2" != "$RBA_DUP_GROUP_WS" ] \
   || fail "a degraded rebind must not land in the ambiguous project workspace it could not re-create"
+RBA_META2_PROJECT_WS_ID=$(grep '^herdr_project_workspace_id=' "$RBA_META2" | cut -d= -f2-)
+[ -z "$RBA_META2_PROJECT_WS_ID" ] \
+  || fail "a degraded rebind must not persist a stale herdr_project_workspace_id in meta, found '$RBA_META2_PROJECT_WS_ID'"
 pass "real herdr E2E: a control-plane rebind degrades herdr-group=on back to the flat home workspace, with the documented warning, when the project workspace cannot be re-created exactly"
 
 if ! cleanup_all; then

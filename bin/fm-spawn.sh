@@ -3761,6 +3761,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # instead of failing the whole reclaim - this seat is standing in for a
     # dead endpoint, and the task itself must not be lost over a layout nicety.
     HERDR_REBIND_PROJECT_GROUP=$("$FM_ROOT/bin/fm-project-mode.sh" --herdr-group "$(basename "$PROJ_ABS")" 2>/dev/null) || HERDR_REBIND_PROJECT_GROUP=off
+    HERDR_PROJECT_WORKSPACE_ID=""
     if [ "$HERDR_REBIND_PROJECT_GROUP" = on ]; then
       HERDR_REBIND_PROJECT_LABEL=$(fm_backend_herdr_project_workspace_label "$PROJ_ABS")
       if fm_backend_herdr_project_workspace_ensure "$HERDR_SES" "$PROJ_ABS" "$HERDR_REBIND_PROJECT_LABEL"; then
