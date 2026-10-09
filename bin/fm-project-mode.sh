@@ -228,7 +228,7 @@ case "$mode" in
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
-case "$herdr_group" in on|herdr-group=on) herdr_group=on ;; *) herdr_group=off ;; esac
+case "$herdr_group" in herdr-group=on) herdr_group=on ;; *) herdr_group=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   echo "$branch"
   exit 0

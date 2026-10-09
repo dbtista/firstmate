@@ -50,4 +50,15 @@ SESSION=$(fm_backend_herdr_session)
 LABEL=$(fm_backend_herdr_project_workspace_label "$PROJ_ABS")
 CONTAINER_RAW=$(fm_backend_herdr_container_ensure "$PROJ_ABS" launcher-home "$SESSION" "$LABEL")
 CONTAINER=${CONTAINER_RAW%%$'\t'*}
+CONTAINER_REST=${CONTAINER_RAW#*$'\t'}
+CONTAINER_SEEDED=${CONTAINER_REST%%$'\t'*}
+if [ "$CONTAINER_REST" = "$CONTAINER_SEEDED" ]; then
+  CONTAINER_DEGRADED=""
+else
+  CONTAINER_DEGRADED=${CONTAINER_REST#*$'\t'}
+fi
+if [ -n "$CONTAINER_DEGRADED" ]; then
+  echo "error: could not ensure the project workspace for '$NAME' (label '$LABEL'); see the warning above for what failed" >&2
+  exit 1
+fi
 printf '%s\n' "${CONTAINER#*:}"
