@@ -33,6 +33,11 @@ Resolve the project name, destination, delivery posture, and autonomy posture be
 Keep a newly added clone and its registry entry consistent, and roll back only artifacts created by the incomplete operation when a later initialization step fails and that rollback is safe.
 Do not overwrite or repurpose an existing path.
 
+The registry's optional `herdr-group=on` token opts a project into its own Herdr project-tab workspace, nested under this home's workspace (docs/herdr-backend.md "Project grouping" owns the mechanism, label shape, and rebind behavior).
+It defaults off and is set only on the captain's explicit instruction, same as `+yolo`.
+Once the registry entry for a newly added or newly created project carries `herdr-group=on`, run `bin/fm-herdr-project-register-hook.sh <name>` immediately so the workspace exists even before any worker is ever spawned into the project; the hook itself no-ops when the toggle is off or the active terminal backend is not herdr, so it is harmless to run unconditionally after every add or create.
+Turning the toggle on for a project that is already registered needs no such step: the workspace is created lazily instead, the next time a worker is spawned into it.
+
 ## Delivery posture
 
 The registry records the project's standing delivery posture and optional ship-branch prefix, which are the captain's defaults rather than any task's answer.

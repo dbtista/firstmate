@@ -18,6 +18,7 @@ Herdr provides the terminal session while Treehouse continues to provide task wo
 | Install Herdr and select it | [Setup](#setup) |
 | Why a command ran on a different `herdr` client | [Client selection](#client-selection) |
 | Where task tabs appear and how to watch them | [Watching and task containers](#watching-and-task-containers) |
+| Grouping a project's own tasks under one project tab | [Project grouping](#project-grouping) |
 | The one-task workspaces, their setting, and their cleanup | [Presentation spaces](#presentation-spaces) |
 | Why a seeded default tab is or is not closed | [Default-tab prune safety](#default-tab-prune-safety) |
 | What task metadata records for a Herdr endpoint | [Endpoint metadata](#endpoint-metadata) |
@@ -163,6 +164,48 @@ Existing task operations use recorded endpoint ids and do not move a live task w
 The per-home workspace is reused while it has task tabs.
 Closing its last tab can remove the workspace, and the next spawn recreates it.
 
+## Project grouping
+
+A project can opt into a second grouping tier nested inside its home workspace, labeled `<home-label>/<project-name>` (for example `firstmate/bitacora`), so every task the primary crew spawns into that project lands under one project tab instead of only under the home tab.
+The home-label prefix scopes the label to its own home by construction, so two homes with a same-named project can never collide on one workspace.
+A literal `·` (middot) in the project name is replaced with `-`, so a project label can never coincidentally satisfy the presentation-spaces child grammar described under [Presentation spaces](#presentation-spaces).
+
+### Enabling it
+
+The project's registry entry in `data/projects.md` carries the opt-in as a `herdr-group=on` bracket token, alongside the existing `mode`, `+yolo`, `branch=`, and `forge=` tokens (`bin/fm-project-mode.sh --herdr-group <name>`).
+It defaults off, same as `+yolo`, and is set only on the captain's explicit instruction.
+
+It applies to the primary crew's own workers only.
+A `--secondmate` launch keeps using that secondmate home's own workspace exactly as described under [Watching and task containers](#watching-and-task-containers); this tier is not extended into that path.
+
+### When the workspace is created
+
+The project's workspace is created eagerly, at project registration or clone time, by `bin/fm-herdr-project-register-hook.sh <name>`, which the project-management procedure runs once the registry entry carries the toggle.
+That means the workspace exists even before any worker is ever spawned into the project.
+The hook no-ops when the toggle is off or the active terminal backend is not herdr.
+
+Turning the toggle on for a project that is already registered does not retroactively create the workspace.
+It is created lazily instead, the next time a worker is spawned into that project, the same way the home workspace itself is created on first use.
+
+### Composing with presentation spaces
+
+With presentation spaces also active, a task's own projected workspace nests under the project workspace instead of the home workspace: the project workspace becomes the owning parent described under [Owning parent and tabs](#owning-parent-and-tabs), and is itself ordered immediately after the home workspace using the same best-effort `workspace.move` path described under [Ordering](#ordering).
+The project-grouping label is recognized as a valid top-level parent by that ordering's label grammar, so a projected child nests correctly under a project workspace exactly as it would under a home workspace.
+
+Without presentation spaces, a task is created directly as a tab inside the project workspace: home workspace, then project workspace, then task tab.
+
+### Degrading to flat on a failed or ambiguous ensure
+
+A failed or refused project-workspace ensure (including the ambiguous-multi-match refusal) degrades to the ordinary flat home-workspace layout with a warning rather than failing the spawn or reclaim, the same degrade shape presentation spaces already use for an unavailable ordering method.
+This applies uniformly at every call site: a fresh spawn with presentation spaces active, a fresh spawn without them, and a reclaimed endpoint re-resolving its recorded project workspace (the control plane's rebind path described under [Recovery and existing tasks](#recovery-and-existing-tasks)) from the task's own metadata.
+The task's endpoint, and the task spawn itself, are never lost over a layout nicety.
+The eager register-time hook (`bin/fm-herdr-project-register-hook.sh`) is the one exception: since its entire job is creating that workspace, it treats its own degrade as a failure and exits non-zero rather than silently succeeding with no workspace created.
+
+### Protocol floor
+
+No new protocol or version floor gate is needed for this tier.
+It only ever calls the already-unconditional `workspace create`, and its only use of `workspace.move` goes through the same call already gated by the presentation-spaces floor described under [Why the default needs Herdr 0.8.0](#why-the-default-needs-herdr-080).
+
 ## Presentation spaces
 
 Each new crewmate or scout is placed in a disposable one-task workspace by default, on Herdr 0.8.0 and newer.
@@ -263,6 +306,7 @@ Neither token, title, nor journal authorizes send, capture, task ownership, Tree
 
 The owning parent is the launcher's own exact workspace, resolved from the same identity the flat path uses.
 It falls back to a unique home-label lookup only for a Firstmate outside Herdr.
+With [project grouping](#project-grouping) active for the project, the owning parent is that project's workspace instead of the home workspace.
 Projected children are never collapsed back into that parent.
 The parent is the placement and ordering reference the projection is bound under.
 
@@ -511,11 +555,13 @@ herdr_session=<session>
 herdr_workspace_id=<workspace-id>
 herdr_tab_id=<tab-id>
 herdr_pane_id=<pane-id>
+herdr_project_workspace_id=<workspace-id>
 ```
 
 A Herdr pane id contains a colon, so the adapter splits `window=` on the first colon only.
 The recorded pane is the operational fast path.
 Workspace and tab ids support verification and cleanup but are not inferred from mutable labels during normal operation.
+`herdr_project_workspace_id` is present only when [project grouping](#project-grouping) placed the task under a project workspace; its absence means the task used the ordinary flat or home-only placement.
 
 ## Current transport behavior
 
