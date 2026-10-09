@@ -194,11 +194,12 @@ The project-grouping label is recognized as a valid top-level parent by that ord
 
 Without presentation spaces, a task is created directly as a tab inside the project workspace: home workspace, then project workspace, then task tab.
 
-### Degrading to flat on a reclaim
+### Degrading to flat on a failed or ambiguous ensure
 
-When a destroyed endpoint is reclaimed (the control plane's rebind path described under [Recovery and existing tasks](#recovery-and-existing-tasks)), Firstmate re-resolves the recorded project workspace from the task's own metadata.
-If it cannot be exactly re-verified, the reclaim degrades to the ordinary flat home-workspace layout with a warning rather than failing the whole reclaim, the same degrade shape presentation spaces already use for an unavailable ordering method.
-The task's endpoint is never lost over a layout nicety.
+A failed or refused project-workspace ensure (including the ambiguous-multi-match refusal) degrades to the ordinary flat home-workspace layout with a warning rather than failing the spawn or reclaim, the same degrade shape presentation spaces already use for an unavailable ordering method.
+This applies uniformly at every call site: a fresh spawn with presentation spaces active, a fresh spawn without them, and a reclaimed endpoint re-resolving its recorded project workspace (the control plane's rebind path described under [Recovery and existing tasks](#recovery-and-existing-tasks)) from the task's own metadata.
+The task's endpoint, and the task spawn itself, are never lost over a layout nicety.
+The eager register-time hook (`bin/fm-herdr-project-register-hook.sh`) is the one exception: since its entire job is creating that workspace, it treats its own degrade as a failure and exits non-zero rather than silently succeeding with no workspace created.
 
 ### Protocol floor
 
