@@ -46,7 +46,7 @@ mark() { if [ "$1" = 1 ]; then printf '✅'; else printf '❌'; fi; }
 have_bin=0 daemon=0 registered=0 notes=0
 if command -v bitacorad >/dev/null 2>&1; then
   have_bin=1
-  pgrep -f '(^|/)bitacorad serve( |$)' >/dev/null 2>&1 && daemon=1
+  pgrep -f '(^|/)bitacorad( +-[^ ]+( +[^- ][^ ]*)?)* +serve( |$)' >/dev/null 2>&1 && daemon=1
   bitacorad project list 2>/dev/null | awk -v r="$ROOT" '{ for (i = 1; i <= NF; i++) if ($i == r) f = 1 } END { exit !f }' && registered=1
   if [ -d "$ROOT" ]; then
     notes=$(bitacorad hook session-start --root "$ROOT" 2>/dev/null | grep -c '^note ')

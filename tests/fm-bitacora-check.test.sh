@@ -17,7 +17,7 @@ mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/bitacorad" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in
-  serve) sleep 30 ;;
+  serve|--root) case " $* " in *" serve "*) sleep 30 ;; esac ;;
   project) printf '%s\n' ${STUB_REGISTERED:-} ;;
   hook) n=${STUB_NOTES:-0}; i=0; while [ "$i" -lt "$n" ]; do echo "note $i"; i=$((i + 1)); done ;;
 esac
@@ -29,6 +29,11 @@ PATH_WITH_STUB="$STUB_BIN:$PATH"
 DAEMON_PID=""
 start_daemon() {
   "$STUB_BIN/bitacorad" serve >/dev/null 2>&1 &
+  DAEMON_PID=$!
+  sleep 0.3
+}
+start_daemon_with_root() {
+  "$STUB_BIN/bitacorad" --root "$TMP_ROOT/root-less" serve --port 2009 >/dev/null 2>&1 &
   DAEMON_PID=$!
   sleep 0.3
 }
@@ -62,6 +67,18 @@ test_connected_project() {
   assert_contains "$OUT" "Bitácora · alpha" "names the project"
   assert_not_contains "$OUT" "No conectado" "no fix hints when connected"
   pass "connected project exits 0"
+}
+
+test_connected_with_root_and_port_flags() {
+  local h
+  h=$(new_home rootflags)
+  mkdir -p "$h/projects/alpha"
+  start_daemon_with_root
+  STUB_REGISTERED="$h/projects/alpha" STUB_NOTES=1 run_check "$h" alpha
+  stop_daemon
+  expect_code 0 "$RC" "daemon launched with --root/--port"
+  assert_not_contains "$OUT" "No conectado" "detected as active"
+  pass "daemon launched as bitacorad --root <path> serve --port <n> is active"
 }
 
 test_not_connected_prints_fix_hints() {
@@ -118,6 +135,7 @@ test_shellcheck_clean() {
 }
 
 test_connected_project
+test_connected_with_root_and_port_flags
 test_not_connected_prints_fix_hints
 test_prefix_sibling_not_registered
 test_no_projects
