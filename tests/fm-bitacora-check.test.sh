@@ -17,7 +17,7 @@ mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/bitacorad" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in
-  serve) exec sleep 30 ;;
+  serve) sleep 30 ;;
   project) printf '%s\n' ${STUB_REGISTERED:-} ;;
   hook) n=${STUB_NOTES:-0}; i=0; while [ "$i" -lt "$n" ]; do echo "note $i"; i=$((i + 1)); done ;;
 esac
@@ -99,6 +99,18 @@ test_all_projects_without_argument() {
   pass "no-argument run checks every project"
 }
 
+test_prefix_sibling_not_registered() {
+  local h
+  h=$(new_home sibling)
+  mkdir -p "$h/projects/foo" "$h/projects/foobar"
+  start_daemon
+  STUB_REGISTERED="$h/projects/foobar" STUB_NOTES=2 run_check "$h" foo
+  stop_daemon
+  expect_code 1 "$RC" "prefix sibling is not connected"
+  assert_contains "$OUT" "bitacorad project add $h/projects/foo" "unregistered sibling gets a hint"
+  pass "prefix-sibling project is not reported registered"
+}
+
 test_shellcheck_clean() {
   command -v shellcheck >/dev/null 2>&1 || { pass "shellcheck absent, skipped"; return; }
   shellcheck "$CHECK" || fail "shellcheck"
@@ -107,6 +119,7 @@ test_shellcheck_clean() {
 
 test_connected_project
 test_not_connected_prints_fix_hints
+test_prefix_sibling_not_registered
 test_no_projects
 test_all_projects_without_argument
 test_shellcheck_clean
