@@ -141,6 +141,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/dnp-flow/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/firstmate-codexapp/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -322,6 +326,10 @@
     },
     {
       "path": "docs/configuration.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/dnp-flow.md",
       "audience": "operator-current"
     },
     {

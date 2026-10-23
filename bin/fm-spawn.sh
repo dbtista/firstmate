@@ -360,6 +360,17 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
+# Worker skill scope (data/<task-id>/skills-off):
+#   Optional, per task, and written beside the brief by the dnp-flow skill
+#   (.agents/skills/dnp-flow/SKILL.md). It names skills one per line that this
+#   ship or scout worker must not load; bin/fm-skill-scope-lib.sh owns the
+#   format, and a malformed file refuses the spawn before provisioning. A
+#   claude template launch carries each name as "off" in its inline --settings
+#   skillOverrides, which hides the skill from both the model and its slash
+#   command; a skill the list does not name stays available. Every other
+#   runtime, and a raw launch command, has no enforced skill scoping: the spawn
+#   prints a note and proceeds, and the brief's skill instructions are the only
+#   limit. The file is read on every spawn and relaunch; secondmates ignore it.
 # Worker account pin (config/claude-account, config/pi-account):
 #   Opt-in. With no file, a Claude or Pi launch is unchanged: Claude still
 #   receives this process's own CLAUDE_CONFIG_DIR when it is set, and Pi the
@@ -575,6 +586,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-skill-scope-lib.sh
+. "$SCRIPT_DIR/fm-skill-scope-lib.sh"
 if ! LAUNCH_ENV_ENABLED=$(fm_config_source_present "$CONFIG/launch-env-allowlist"); then
   exit 1
 fi
@@ -2078,6 +2091,8 @@ launch_template() {
   # sources are not guaranteed to load that scope, so a worker would
   # otherwise run with attribution back on; carrying it per launch keeps the
   # policy in force regardless of which settings scopes end up loaded.
+  # The same JSON also carries any data/<id>/skills-off list as skillOverrides
+  # (header "Worker skill scope").
   # __CLAUDEPERMFLAG__ is the permission flag config/claude-permission-mode
   # selects (header above): --dangerously-skip-permissions by default, or
   # --permission-mode auto for a captain who refuses bypass mode.
@@ -2391,6 +2406,16 @@ fi
 EXCLUDE_TOOLS=
 if [ "$KIND" != secondmate ]; then
   EXCLUDE_TOOLS=$(fm_exclude_tools_check "$HARNESS" "$RAW_LAUNCH" "$CONFIG") || exit 1
+fi
+
+# data/<id>/skills-off (header "Worker skill scope"): validate before worker
+# provisioning; only a claude template launch enforces it.
+SKILLS_OFF=
+if [ "$KIND" != secondmate ]; then
+  SKILLS_OFF=$(fm_skill_scope_names "$DATA/$ID") || exit 1
+  if [ -n "$SKILLS_OFF" ] && { [ "$HARNESS" != claude ] || [ "$RAW_LAUNCH" = 1 ]; }; then
+    echo "note: data/$ID/skills-off lists skills to hide, but this $HARNESS launch has no enforced skill scoping; the brief's skill instructions are the only limit" >&2
+  fi
 fi
 
 case "$HARNESS" in
@@ -5343,11 +5368,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
-if [ "$KEEP_AI_TRAILERS" = 1 ]; then
-  LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}
-else
-  LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/,'"attribution":{"commit":"","pr":"","sessionUrl":false}'}
+CLAUDE_SETTINGS_EXTRA=$(fm_skill_scope_claude_settings "$SKILLS_OFF")
+if [ "$KEEP_AI_TRAILERS" != 1 ]; then
+  CLAUDE_SETTINGS_EXTRA=',"attribution":{"commit":"","pr":"","sessionUrl":false}'"$CLAUDE_SETTINGS_EXTRA"
 fi
+LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/$CLAUDE_SETTINGS_EXTRA}
 if [ "$HARNESS" = rovo ]; then
   ROVOCONFIGOVERRIDE=$(rovo_config_override_flag "$EFFORT" "$DATA" "$STATE" "$ID") || {
     echo "error: could not resolve this task's home paths for rovo's allowedExternalPaths grant" >&2

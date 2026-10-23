@@ -57,6 +57,8 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   secondmates.md      local and remote secondmate routing table; firstmate-private, maintained by the secondmate seed helpers (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
+  <id>/skills-off   optional skills a ship or scout worker must not load; enforced on Claude launches only (bin/fm-spawn.sh header "Worker skill scope")
+  dnp-chains/        dnp-flow chain records, cycle reports, and per-project role profiles; bin/fm-dnp-flow.sh owns the format
   pipeline-spend.jsonl  optional per-task no-mistakes pipeline spend, written only when config/pipeline-spend is present; bin/fm-pipeline-spend.sh owns the schema
 projects/            cloned repos; gitignored; read-only except under hard rule 1's concrete captain-approved project operation exception
 state/               runtime records and signals; gitignored

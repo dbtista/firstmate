@@ -2009,6 +2009,75 @@ SH
   pass "fm-spawn: actual ship/scout launch commands deliver the worker role contract"
 }
 
+# data/<id>/skills-off (bin/fm-spawn.sh header "Worker skill scope"): a claude
+# launch carries each listed skill as "off" in its skillOverrides beside the
+# attribution policy, another runtime gets a note and no setting, and a
+# malformed list refuses before any endpoint or metadata.
+test_claude_skills_off_reaches_skill_overrides() {
+  local rec id out status settings
+  id=skillscope-claude-z31
+  rec=$(make_spawn_case skillscope-claude claude "$id")
+  read_case_record "$rec"
+  printf '# role scope\nbitacora\n\n  aiuse:review  \n' > "$HOME_DIR/data/$id/skills-off"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with a skills-off list should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")") || fail "claude launch carries no --settings JSON"
+  printf '%s' "$settings" | jq -e '.skillOverrides == {"bitacora":"off","aiuse:review":"off"}' >/dev/null \
+    || fail "claude launch settings do not turn the listed skills off: $settings"
+  assert_attribution_policy "$(cat "$LAUNCH_LOG")" "skill-scoped claude"
+  assert_not_contains "$out" "no enforced skill scoping" "an enforcing claude launch must not print the fallback note"
+  pass "a claude launch turns every data/<id>/skills-off entry off in skillOverrides"
+}
+
+test_claude_without_skills_off_has_no_skill_overrides() {
+  local rec id out status settings
+  id=skillscope-none-z32
+  rec=$(make_spawn_case skillscope-none claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn without a skills-off list should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")") || fail "claude launch carries no --settings JSON"
+  printf '%s' "$settings" | jq -e 'has("skillOverrides") | not' >/dev/null \
+    || fail "a claude launch without skills-off still carries skillOverrides: $settings"
+  pass "a claude launch without data/<id>/skills-off carries no skillOverrides"
+}
+
+test_non_claude_skills_off_notes_the_missing_enforcement() {
+  local rec id out status launch
+  id=skillscope-codex-z33
+  rec=$(make_spawn_case skillscope-codex codex "$id")
+  read_case_record "$rec"
+  printf 'bitacora\n' > "$HOME_DIR/data/$id/skills-off"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "codex spawn with a skills-off list should proceed"$'\n'"$out"
+  assert_contains "$out" "this codex launch has no enforced skill scoping" "a non-enforcing runtime must say so"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "skillOverrides" "a non-claude launch must not carry Claude skill settings"
+  pass "a non-claude launch with skills-off proceeds with a note that nothing enforces it"
+}
+
+test_malformed_skills_off_refuses_before_endpoint_or_metadata() {
+  local rec id out status
+  id=skillscope-bad-z34
+  rec=$(make_spawn_case skillscope-bad claude "$id")
+  read_case_record "$rec"
+  printf 'bitacora\nbad name\n' > "$HOME_DIR/data/$id/skills-off"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "a malformed skills-off list must refuse the spawn"
+  assert_contains "$out" "malformed entry 'bad name'" "refusal must name the offending entry"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a malformed skills-off list must launch nothing (got: $(cat "$LAUNCH_LOG"))"
+  assert_absent "$HOME_DIR/state/$id.meta" "refusal must happen before meta is written"
+  pass "a malformed data/<id>/skills-off refuses before any endpoint or metadata"
+}
+
 # config/claude-permission-mode (bin/fm-spawn.sh header): absent and `bypass`
 # must both produce today's launch byte-for-byte, `auto` swaps only the
 # permission flag, and any other token refuses before endpoint or metadata.
@@ -2255,6 +2324,10 @@ test_claude_crewmate_launch_carries_the_attribution_policy
 test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
 test_keep_ai_trailers_reaches_secondmate_crew_launches
 test_claude_secondmate_launch_carries_the_attribution_policy
+test_claude_skills_off_reaches_skill_overrides
+test_claude_without_skills_off_has_no_skill_overrides
+test_non_claude_skills_off_notes_the_missing_enforcement
+test_malformed_skills_off_refuses_before_endpoint_or_metadata
 test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"

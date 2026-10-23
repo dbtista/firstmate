@@ -2494,3 +2494,53 @@ Without Firstmate's hooks, Herdr reported the question panel as `blocked`, which
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/fm-test-run.sh tests/fm-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above before publication if watcher or task-inbox busy code changes; `bin/fm-test-run.sh tests/fm-task-inbox.test.sh` refreshes the portable ladder regressions.
+
+## dnp-flow launch surfaces
+
+Verified 2026-10-23 on Linux with Claude Code `2.1.309 (Claude Code)` and Herdr `0.9.5`, using the `haiku` model for every prompt.
+These runs back three current guarantees of the [dnp-flow chain](../dnp-flow.md): the `.init dev` prompt hook reaches the model, `skillOverrides` hides a scoped skill, and Herdr shows a role title on the pane without touching the identity-bearing tab label.
+
+### Prompt hook context
+
+A scratch Git repository loaded `bin/fm-dnp-init-hook.sh` as its only `UserPromptSubmit` hook through `--settings`, with `S='{"feedbackDrafts":"off","hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"<code root>/bin/fm-dnp-init-hook.sh","timeout":5}]}]}}'`.
+
+```sh
+claude -p --model haiku --settings "$S" $'.init dev status\nReply with only the skill name that hook context told you to load and the arguments it named, as <skill> <args>, or NONE.'
+claude -p --model haiku --settings "$S" $'hello\nReply with only the skill name that hook context told you to load and the arguments it named, as <skill> <args>, or NONE.'
+```
+
+```
+dnp-flow status
+NONE
+```
+
+### Skill scope through skillOverrides
+
+The scratch repository held two project skills, `fmprobe-alpha` and `fmprobe-beta`, in `.claude/skills/`, with `q='List every skill name available to you (from your skill listing) whose name starts with fmprobe. Reply with only the names, comma separated, or NONE.'`.
+
+```sh
+claude -p --model haiku --settings '{"feedbackDrafts":"off"}' "$q"
+claude -p --model haiku --settings '{"feedbackDrafts":"off","skillOverrides":{"fmprobe-alpha":"off"}}' "$q"
+claude -p --model haiku --settings '{"skillOverrides":{"fmprobe-alpha":"off"}}' 'Call the Skill tool with skill "fmprobe-alpha". Then reply with the exact tool result text, verbatim, nothing else.'
+```
+
+```
+fmprobe-alpha, fmprobe-beta
+fmprobe-beta
+<tool_error>Skill fmprobe-alpha is disabled for model invocation in skillOverrides settings</tool_error>
+```
+
+The hidden skill leaves the model's listing and its invocation is refused, while the unlisted skill stays available; `tests/fm-spawn-dispatch-profile.test.sh` pins the launch flag that `data/<task>/skills-off` produces.
+
+### Herdr pane title
+
+In a named isolated lab session through `bin/fm-herdr-lab.sh`, a tab labelled `fm-probe-task` was created and its root pane renamed with `"$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" pane rename w1:p2 '[DevSecOps] 🔴 🛡️ [aiuse]'`.
+
+```
+{"pane_id":"w1:p2","label":"[DevSecOps] 🔴 🛡️ [aiuse]","tab_id":"w1:t2"}
+{"tab_id":"w1:t2","label":"fm-probe-task"}
+```
+
+The rename exited `0`, `pane get` reported the new label, the tab label stayed `fm-probe-task`, and lab teardown exited `0`.
+`tests/fm-dnp-flow.test.sh` pins the `pane rename` and tmux `select-pane -T` calls that `bin/fm-dnp-flow.sh title --apply` issues.
+Repeat these runs after a Claude Code or Herdr upgrade before relying on the chain's skill scope or titles.
