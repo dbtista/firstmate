@@ -1,0 +1,10 @@
+$ FM_HOME=<lab> fm-dnp-flow.sh title dnp-bitacora-2 dev --apply   (herdr lab session fm-lab-dnp-2653798-16932, pane w1:p2)
+[Dev] 🟢 💻 [bitacora]
+[exit 0]
+$ herdr pane get w1:p2 (lab session)
+{
+  "pane_id": "w1:p2",
+  "label": "[Dev] 🟢 💻 [bitacora]",
+  "title": null,
+  "name": null
+}

@@ -1,0 +1,215 @@
+### Scenario: chain lifecycle
+$ fm-dnp-flow.sh roles
+architect Architect 🔵 📐
+dev Dev 🟢 💻
+ux UX 🟠 🎨
+devsecops DevSecOps 🔴 🛡️
+devops DevOps 🟣 ⚙️
+docs Docs ⚪ 📝
+qa QA 🟡 🧪
+[exit 0]
+$ fm-dnp-flow.sh new bitacora dev qa
+error: a chain needs the architect role
+[exit 1]
+$ fm-dnp-flow.sh new bitacora qa devsecops dev architect
+dnp-bitacora-1
+[exit 0]
+$ fm-dnp-flow.sh set-role dnp-bitacora-1 dev --harness claude --model opus --effort high --skills qa-testing-expert,docs
+[exit 0]
+$ fm-dnp-flow.sh title dnp-bitacora-1 devsecops
+[DevSecOps] 🔴 🛡️ [bitacora]
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 architect
+active: architect
+round: 0/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --note plan ready
+active: dev
+round: 0/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 devsecops
+active: devsecops
+round: 0/3
+tip: (none)
+[exit 0]
+### Scenario: DevSecOps return does not consume a round
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --return --note sqli in login
+active: dev
+round: 0/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 devsecops
+active: devsecops
+round: 0/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 qa
+active: qa
+round: 0/3
+tip: (none)
+[exit 0]
+### Scenario: QA returns 1..3 count, 4th refused
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --return --note qa blocker 1
+active: dev
+round: 1/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 qa
+active: qa
+round: 1/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --return --note qa blocker 2
+active: dev
+round: 2/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 qa
+active: qa
+round: 2/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --return --note qa blocker 3
+active: dev
+round: 3/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 qa
+active: qa
+round: 3/3
+tip: (none)
+[exit 0]
+$ fm-dnp-flow.sh handoff dnp-bitacora-1 dev --return --note qa blocker 4
+error: return cap reached: 3 of 3 QA return rounds already used; hold the captain decision instead
+[exit 3]
+record unchanged after refused 4th QA return: YES
+$ fm-dnp-flow.sh status dnp-bitacora-1
+chain: dnp-bitacora-1
+project: bitacora
+state: active
+active: qa
+round: 3/3
+tip: (none)
+roles: architect,dev,devsecops,qa
+last_handoff: dev -> qa (forward) at 2026-10-23T20:37:15Z
+pr: (none)
+[exit 0]
+### Scenario: stop & resume
+$ fm-dnp-flow.sh state dnp-bitacora-1 stopped
+[exit 0]
+$ fm-dnp-flow.sh status
+dnp-bitacora-1 project=bitacora state=stopped active=qa round=3/3
+[exit 0]
+$ fm-dnp-flow.sh latest bitacora
+dnp-bitacora-1
+[exit 0]
+$ fm-dnp-flow.sh state dnp-bitacora-1 active
+[exit 0]
+### Scenario: latest prefix collision
+$ fm-dnp-flow.sh new bitacora-web architect dev qa
+dnp-bitacora-web-1
+[exit 0]
+$ fm-dnp-flow.sh state dnp-bitacora-1 closed --pr https://github.com/example/bitacora/pull/9
+[exit 0]
+$ fm-dnp-flow.sh latest bitacora
+[exit 1]
+$ fm-dnp-flow.sh latest bitacora-web
+dnp-bitacora-web-1
+[exit 0]
+$ fm-dnp-flow.sh new bitacora architect dev qa
+dnp-bitacora-2
+[exit 0]
+$ fm-dnp-flow.sh latest bitacora
+dnp-bitacora-2
+[exit 0]
+### Scenario: profile reuse
+$ fm-dnp-flow.sh profile save dnp-bitacora-1
+/tmp/fm-lab.fBtTGP/data/dnp-chains/profiles/bitacora.json
+[exit 0]
+$ fm-dnp-flow.sh profile show bitacora
+{
+  "project": "bitacora",
+  "saved_at": 1792787836,
+  "from_chain": "dnp-bitacora-1",
+  "roles": [
+    {
+      "role": "architect",
+      "harness": "",
+      "model": "",
+      "effort": "",
+      "skills": "all"
+    },
+    {
+      "role": "dev",
+      "harness": "claude",
+      "model": "opus",
+      "effort": "high",
+      "skills": [
+        "qa-testing-expert",
+        "docs"
+      ]
+    },
+    {
+      "role": "devsecops",
+      "harness": "",
+      "model": "",
+      "effort": "",
+      "skills": "all"
+    },
+    {
+      "role": "qa",
+      "harness": "",
+      "model": "",
+      "effort": "",
+      "skills": "all"
+    }
+  ]
+}
+[exit 0]
+$ fm-dnp-flow.sh profile show aiuse
+[exit 1]
+### Scenario: cycle report
+# dnp-flow cycle report: dnp-bitacora-1
+
+Project: bitacora
+
+QA return rounds used: 3 of 3
+
+PR: https://github.com/example/bitacora/pull/9
+
+## Roles
+
+| Role | Task | Harness | Model | Effort | Skills |
+| --- | --- | --- | --- | --- | --- |
+| architect | dnp-bitacora-1-architect |  |  |  | all |
+| dev | dnp-bitacora-1-dev | claude | opus | high | qa-testing-expert, docs |
+| devsecops | dnp-bitacora-1-devsecops |  |  |  | all |
+| qa | dnp-bitacora-1-qa |  |  |  | all |
+
+## Handoffs
+
+- 2026-10-23T20:37:15Z: start -> architect (start, round 0)
+- 2026-10-23T20:37:15Z: architect -> dev (forward, round 0): plan ready
+- 2026-10-23T20:37:15Z: dev -> devsecops (forward, round 0)
+- 2026-10-23T20:37:15Z: devsecops -> dev (return, round 0): sqli in login
+- 2026-10-23T20:37:15Z: dev -> devsecops (forward, round 0)
+- 2026-10-23T20:37:15Z: devsecops -> qa (forward, round 0)
+- 2026-10-23T20:37:15Z: qa -> dev (return, round 1): qa blocker 1
+- 2026-10-23T20:37:15Z: dev -> qa (forward, round 1)
+- 2026-10-23T20:37:15Z: qa -> dev (return, round 2): qa blocker 2
+- 2026-10-23T20:37:15Z: dev -> qa (forward, round 2)
+- 2026-10-23T20:37:15Z: qa -> dev (return, round 3): qa blocker 3
+- 2026-10-23T20:37:15Z: dev -> qa (forward, round 3)
+
+## Per-role actions
+
+- architect:
+- dev:
+- devsecops:
+- qa:
+
+## Pending cosmetic findings
+
+- none recorded

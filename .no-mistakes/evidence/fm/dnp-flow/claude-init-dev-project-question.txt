@@ -1,0 +1,40 @@
+    setup stopped partway through.
+  - Bitácora web, first chain (architect → dev → QA): Also open but empty. No worker was launched for any role, and no
+    work exists.
+
+  Closed
+  - Bitácora, first chain (architect → dev → security → QA): Finished delivery after using all 3 QA rounds. Its PR is
+    https://github.com/example/bitacora/pull/9.
+
+  Two notes on this answer:
+  - I only read the records and changed nothing. They come from a test home under /tmp, not your usual home.
+  - The startup check didn't run in this session, so I haven't confirmed the session lock. I'd run that check before
+    doing anything more than reading.
+
+  To continue, decide for each of the two open chains whether to restart it from the beginning or stop it. You can say
+  .init dev bitacora or .init dev bitacora-web and I'll ask which you want.
+
+✻ Cogitated for 22s · done 4:40 PM
+
+❯ .init dev bitacora
+
+  Ran 2 shell commands
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Bitácora
+
+│ Captain, Bitácora already has an open development chain (architect → dev → QA). It was set up but never started: no
+│ plan, no commits, and 0 of 3 QA rounds used. Only the dev worker was launched, and its isolated copy is gone even
+│ though its session still shows as running. What should I do with it?
+
+❯ 1. Continue it
+     Keep the existing chain: launch the missing roles, relaunch dev into a fresh isolated copy, and hand off to the
+     architect. I'll still need the actual request for the change.
+  2. Start a new chain
+     Stop the existing chain (no work to lose) and set up a fresh one from your request.
+  3. Cancel
+     Leave everything as it is and do nothing.
+  4. Type something.
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

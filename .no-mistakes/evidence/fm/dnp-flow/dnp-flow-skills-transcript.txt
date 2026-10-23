@@ -1,0 +1,26 @@
+### Scenario: skill listing follows the worker's Claude config root
+$ env CLAUDE_CONFIG_DIR=/tmp/fm-lab.fBtTGP/fake-claude-cfg bin/fm-dnp-flow.sh skills /tmp/fm-lab.fBtTGP/projects/bitacora
+bitacora-api
+bitacora-db
+cfgdir-personal
+[exit 0]
+(config/claude-account pinned to /tmp/fm-lab.fBtTGP/pinned-acct; CLAUDE_CONFIG_DIR still set)
+$ env CLAUDE_CONFIG_DIR=/tmp/fm-lab.fBtTGP/fake-claude-cfg bin/fm-dnp-flow.sh skills /tmp/fm-lab.fBtTGP/projects/bitacora
+bitacora-api
+bitacora-db
+pinned-personal
+[exit 0]
+### Scenario: per-role skill scope (dev chose bitacora-db only)
+$ bin/fm-dnp-flow.sh set-role dnp-bitacora-2 dev --skills bitacora-db
+[exit 0]
+$ env CLAUDE_CONFIG_DIR=/tmp/fm-lab.fBtTGP/fake-claude-cfg bin/fm-dnp-flow.sh scope dnp-bitacora-2 dev /tmp/fm-lab.fBtTGP/projects/bitacora
+/tmp/fm-lab.fBtTGP/data/dnp-bitacora-2-dev/skills-off
+[exit 0]
+# dnp-flow skill scope for dnp-bitacora-2-dev; skills outside this list stay available
+bitacora-api
+cfgdir-personal
+$ bin/fm-dnp-flow.sh set-role dnp-bitacora-2 dev --skills all
+[exit 0]
+$ bin/fm-dnp-flow.sh scope dnp-bitacora-2 dev /tmp/fm-lab.fBtTGP/projects/bitacora
+all skills available to dnp-bitacora-2-dev
+[exit 0]
