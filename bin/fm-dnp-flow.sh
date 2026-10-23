@@ -31,8 +31,8 @@
 # qa, sorts them into catalog order, and creates the next chain record
 # `dnp-<project>-<n>` under data/dnp-chains/<chain>/chain.json; it prints the
 # chain id. Each role's task id is `<chain>-<role>`.
-# `latest` prints the newest chain for <project> that is not closed, exit 1
-# when there is none.
+# `latest` prints the newest chain whose record names <project> and that is
+# not closed, exit 1 when there is none.
 # `set-role` records the captain's dispatch and skill choice for one role;
 # `--skills all` (the default) leaves every skill available.
 # `title` prints `[<Title>] <color> <icon> [<project>]`. With --apply it sets
@@ -43,9 +43,10 @@
 # `handoff` records a handoff from the active role to <to-role>, sets the tip
 # branch to the outgoing role's task branch (read from its state/<task>.meta),
 # and makes <to-role> active. The first handoff of a chain starts it.
-# `--return` marks a return for a blocking finding and counts one round; a
-# return past DNP_FLOW_MAX_ROUNDS (3) is refused with exit 3 and changes
-# nothing, which is the signal to hold the captain decision.
+# `--return` marks a return for a blocking finding. Only a return issued while
+# qa is active counts one round; a return from any other role is recorded but
+# consumes none. A qa return past DNP_FLOW_MAX_ROUNDS (3) is refused with exit
+# 3 and changes nothing, which is the signal to hold the captain decision.
 # `status` prints one chain's active role, round, tip, and last handoff, or one
 # line per chain with no argument.
 # `state` records active, stopped (resumable), or closed, plus an optional PR.
@@ -53,7 +54,10 @@
 # under data/dnp-chains/profiles/<project>.json; `profile show` prints it,
 # exit 1 when absent.
 # `skills` lists the skill names a worker in <project-dir> could load: the
-# project's .claude/skills and .agents/skills and the user's ~/.claude/skills.
+# project's .claude/skills and .agents/skills and the personal skills of the
+# Claude config root a worker launches with, which follows bin/fm-spawn.sh:
+# the root pinned by config/claude-account (~/.claude for `ordinary`) when
+# present, else ${CLAUDE_CONFIG_DIR:-~/.claude}.
 # Plugin and built-in skills are not listed and so are never scoped off.
 # `scope` writes data/<task>/skills-off, the listed skills minus the role's
 # chosen ones, which bin/fm-spawn.sh enforces on claude workers only (its
@@ -62,8 +66,8 @@
 # from the record when absent, and prints its path.
 #
 # Records are captain-private: they live under the home's gitignored data/.
-# Environment: FM_HOME selects the home; FM_DATA_OVERRIDE and
-# FM_STATE_OVERRIDE override its data/ and state/ directories.
+# Environment: FM_HOME selects the home; FM_DATA_OVERRIDE, FM_STATE_OVERRIDE,
+# and FM_CONFIG_OVERRIDE override its data/, state/, and config/ directories.
 # shellcheck disable=SC2016 # jq programs use their own $variables
 set -eu
 
@@ -72,6 +76,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 CHAINS="$DATA/dnp-chains"
 DNP_FLOW_MAX_ROUNDS=3
 
@@ -79,6 +84,8 @@ DNP_FLOW_MAX_ROUNDS=3
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-worker-account-lib.sh
+. "$SCRIPT_DIR/fm-worker-account-lib.sh"
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -172,7 +179,7 @@ cmd_new() {
   for dir in "$CHAINS/dnp-$project-"*/; do
     [ -d "$dir" ] || continue
     dir=${dir%/}
-    n=${dir##*-}
+    n=${dir#"$CHAINS/dnp-$project-"}
     case "$n" in '' | *[!0-9]*) continue ;; esac
     [ "$n" -gt "$max" ] && max=$n
   done
@@ -197,9 +204,9 @@ cmd_latest() {
   for dir in "$CHAINS/dnp-$project-"*/; do
     [ -f "$dir/chain.json" ] || continue
     dir=${dir%/}
-    n=${dir##*-}
+    n=${dir#"$CHAINS/dnp-$project-"}
     case "$n" in '' | *[!0-9]*) continue ;; esac
-    jq -e '.state != "closed"' "$dir/chain.json" >/dev/null || continue
+    jq -e --arg p "$project" '.project == $p and .state != "closed"' "$dir/chain.json" >/dev/null || continue
     if [ "$n" -gt "$best" ]; then
       best=$n
       chain=${dir##*/}
@@ -303,9 +310,9 @@ cmd_handoff() {
     tip=${branch:-$(jq -r '.tip' "$file")}
   fi
   round=$(jq -r '.round' "$file")
-  if [ "$kind" = return ]; then
+  if [ "$kind" = return ] && [ "$from" = qa ]; then
     if [ "$round" -ge "$DNP_FLOW_MAX_ROUNDS" ]; then
-      printf 'error: return cap reached: %s of %s return rounds already used; hold the captain decision instead\n' \
+      printf 'error: return cap reached: %s of %s QA return rounds already used; hold the captain decision instead\n' \
         "$round" "$DNP_FLOW_MAX_ROUNDS" >&2
       exit 3
     fi
@@ -392,10 +399,23 @@ skill_name_of() {  # <SKILL.md>
   printf '%s\n' "$name"
 }
 
+personal_config_root() {
+  local pin root
+  pin=$(fm_worker_account_resolve claude "$CONFIG") || exit 1
+  if [ -z "$pin" ]; then
+    printf '%s\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    return 0
+  fi
+  root=${pin#*$'\t'}
+  root=${root%%$'\t'*}
+  printf '%s\n' "${root:-$HOME/.claude}"
+}
+
 cmd_skills() {
-  local project_dir=$1 root skill
+  local project_dir=$1 personal root skill
   [ -d "$project_dir" ] || die "no project directory '$project_dir'"
-  for root in "$project_dir/.claude/skills" "$project_dir/.agents/skills" "$HOME/.claude/skills"; do
+  personal=$(personal_config_root) || exit 1
+  for root in "$project_dir/.claude/skills" "$project_dir/.agents/skills" "$personal/skills"; do
     [ -d "$root" ] || continue
     for skill in "$root"/*/SKILL.md; do
       [ -f "$skill" ] || continue
@@ -405,7 +425,7 @@ cmd_skills() {
 }
 
 cmd_scope() {
-  local file role project_dir task skills out name
+  local file role project_dir task skills candidates out name
   file=$(chain_file "$1")
   role=$2
   project_dir=$3
@@ -418,12 +438,14 @@ cmd_scope() {
     printf 'all skills available to %s\n' "$task"
     return 0
   fi
+  candidates=$(cmd_skills "$project_dir") || exit 1
   mkdir -p "$DATA/$task"
   {
     printf '# dnp-flow skill scope for %s; skills outside this list stay available\n' "$task"
-    cmd_skills "$project_dir" | while IFS= read -r name; do
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
       grep -qxF -- "$name" <<<"$skills" || printf '%s\n' "$name"
-    done
+    done <<<"$candidates"
   } >"$out.tmp.$$"
   mv "$out.tmp.$$" "$out"
   printf '%s\n' "$out"
@@ -438,7 +460,7 @@ cmd_report() {
     jq -r --argjson max "$DNP_FLOW_MAX_ROUNDS" '
       "# dnp-flow cycle report: \(.chain)", "",
       "Project: \(.project)", "",
-      "Return rounds used: \(.round) of \($max)", "",
+      "QA return rounds used: \(.round) of \($max)", "",
       "PR: \(if .pr == "" then "(none yet)" else .pr end)", "",
       "## Roles", "",
       "| Role | Task | Harness | Model | Effort | Skills |",

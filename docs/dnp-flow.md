@@ -46,8 +46,9 @@ Everything else is cosmetic, never blocks, and is listed in the final report.
 The chain should converge, not polish forever.
 The work goes back to the role that owns the fix, normally Dev, and returns directly to the reviewer that found the problem; a fix that touches a security surface passes DevSecOps first.
 
-A chain allows at most three returns.
-When a fourth would be needed, Firstmate stops the chain and asks the captain whether QA should deliver with the findings listed, the chain should stop, or a fresh chain should continue from the current work.
+A chain allows at most three QA returns: only a return issued by QA consumes a round.
+A return from DevSecOps or any other reviewing role, or a fix DevSecOps makes itself, consumes none.
+When a fourth QA return would be needed, Firstmate stops the chain and asks the captain whether QA should deliver with the findings listed, the chain should stop, or a fresh chain should continue from the current work.
 
 ## Delivery
 
@@ -69,7 +70,7 @@ Firstmate relays its substance to the captain together with the PR.
 - The chain runs only inside Firstmate, one worker per role, under the ordinary supervision and safety rules.
 - Skill choices are enforced only for Claude Code workers, through the launch's `skillOverrides` setting written from `data/<task>/skills-off` (see the "Worker skill scope" section of the [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) header).
   Other runtimes receive the choice as instructions only.
-- The skill list covers the project's `.claude/skills` and `.agents/skills` and the user's `~/.claude/skills`.
+- The skill list covers the project's `.claude/skills` and `.agents/skills` and the personal `skills` of the Claude config root a worker launches with: the root pinned in `config/claude-account` (`~/.claude` for `ordinary`) when present, otherwise `$CLAUDE_CONFIG_DIR` or `~/.claude`.
   Plugin and built-in skills are never hidden.
 - Pane titles are applied on Herdr and tmux only.
 - A `local-only` project may need the captain's call before the earlier roles can be cleaned up, because their branches never reach a remote.

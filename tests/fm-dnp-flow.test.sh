@@ -12,7 +12,7 @@ command -v jq >/dev/null 2>&1 || { printf 'skip: jq absent\n'; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-dnp-flow)
 trap fm_test_cleanup EXIT
-unset FM_ROOT_OVERRIDE FM_DATA_OVERRIDE FM_STATE_OVERRIDE
+unset FM_ROOT_OVERRIDE FM_DATA_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE CLAUDE_CONFIG_DIR
 
 DNP="$ROOT/bin/fm-dnp-flow.sh"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
@@ -81,7 +81,13 @@ test_latest_skips_closed_chains() {
   assert_equals dnp-aiuse-1 "$(dnp "$home" latest aiuse)" "a closed chain is skipped"
   dnp "$home" state dnp-aiuse-1 stopped
   assert_equals dnp-aiuse-1 "$(dnp "$home" latest aiuse)" "a stopped chain stays resumable"
-  pass "latest returns the newest chain that is not closed"
+  assert_equals dnp-bitacora-web-1 "$(dnp "$home" new bitacora-web architect dev qa)" "a dash-prefixed project's chain"
+  dnp "$home" latest bitacora >/dev/null 2>&1; rc=$?
+  expect_code 1 "$rc" "another project whose slug extends this one"
+  assert_equals dnp-bitacora-1 "$(dnp "$home" new bitacora architect dev qa)" "numbering ignores the dash-prefixed project"
+  assert_equals dnp-bitacora-1 "$(dnp "$home" latest bitacora)" "latest names only its own project"
+  assert_equals dnp-bitacora-web-1 "$(dnp "$home" latest bitacora-web)" "the longer slug keeps its chain"
+  pass "latest returns the newest chain of exactly that project that is not closed"
 }
 
 test_handoffs_track_tip_and_cap_returns() {
@@ -118,6 +124,36 @@ test_handoffs_track_tip_and_cap_returns() {
   pass "handoffs track the tip branch and a fourth return is refused with exit 3"
 }
 
+test_only_qa_returns_consume_rounds() {
+  local home chain file out rc before
+  home=$(new_home qa-cap)
+  chain=$(dnp "$home" new aiuse architect dev devsecops qa)
+  file="$home/data/dnp-chains/$chain/chain.json"
+  dnp "$home" handoff "$chain" architect >/dev/null
+  dnp "$home" handoff "$chain" dev >/dev/null
+  dnp "$home" handoff "$chain" devsecops >/dev/null
+  out=$(dnp "$home" handoff "$chain" dev --return --note "devsecops blocking finding")
+  assert_contains "$out" "round: 0/3" "a devsecops return consumes no round"
+  assert_equals return "$(jq -r '.handoffs[-1].kind' "$file")" "the devsecops return is recorded as a return"
+  assert_equals devsecops "$(jq -r '.handoffs[-1].from' "$file")" "the record names who returned the work"
+  dnp "$home" handoff "$chain" devsecops >/dev/null
+  dnp "$home" handoff "$chain" qa >/dev/null
+  for round in 1 2 3; do
+    out=$(dnp "$home" handoff "$chain" dev --return --note "qa blocking bug $round")
+    assert_contains "$out" "round: $round/3" "qa return $round is counted"
+    dnp "$home" handoff "$chain" devsecops >/dev/null
+    out=$(dnp "$home" handoff "$chain" dev --return --note "devsecops finding $round")
+    assert_contains "$out" "round: $round/3" "a devsecops return after qa return $round consumes nothing"
+    dnp "$home" handoff "$chain" qa >/dev/null
+  done
+  before=$(cat "$file")
+  out=$(dnp "$home" handoff "$chain" dev --return 2>&1); rc=$?
+  expect_code 3 "$rc" "a fourth qa return"
+  assert_contains "$out" "3 of 3 QA return rounds already used" "the cap refusal names the qa rounds"
+  assert_equals "$before" "$(cat "$file")" "a refused qa return leaves the record unchanged"
+  pass "only returns issued by qa consume one of the three rounds"
+}
+
 test_set_role_profile_and_scope() {
   local home chain proj out
   home=$(new_home profile)
@@ -142,6 +178,35 @@ test_set_role_profile_and_scope() {
   assert_equals claude-opus-5-5 "$(printf '%s' "$out" | jq -r '.roles[] | select(.role == "dev") | .model')" "profile keeps the model"
   assert_equals "$chain" "$(printf '%s' "$out" | jq -r '.from_chain')" "profile names its chain"
   pass "role choices persist, scope files follow the chosen skills, and profiles round-trip"
+}
+
+test_skills_follow_the_worker_config_root() {
+  local home proj alt pinned out chain
+  home=$(new_home skills-root)
+  proj="$TMP_ROOT/bare-project"
+  alt="$TMP_ROOT/alt-config"
+  pinned="$TMP_ROOT/pinned-config"
+  mkdir -p "$proj" "$alt/skills/alt" "$pinned/skills/pinned" "$TMP_ROOT/user-home/.claude/skills/personal"
+  printf -- '---\nname: alt-skill\n---\n' >"$alt/skills/alt/SKILL.md"
+  printf -- '---\nname: pinned-skill\n---\n' >"$pinned/skills/pinned/SKILL.md"
+  printf -- '---\nname: "personal-notes"\n---\n' >"$TMP_ROOT/user-home/.claude/skills/personal/SKILL.md"
+  assert_equals personal-notes "$(dnp "$home" skills "$proj")" "an unset CLAUDE_CONFIG_DIR lists ~/.claude/skills"
+  out=$(CLAUDE_CONFIG_DIR="$alt" dnp "$home" skills "$proj")
+  assert_equals alt-skill "$out" "CLAUDE_CONFIG_DIR selects the personal skills"
+  mkdir -p "$home/config"
+  printf '%s\n' "$pinned" >"$home/config/claude-account"
+  out=$(CLAUDE_CONFIG_DIR="$alt" dnp "$home" skills "$proj")
+  assert_equals pinned-skill "$out" "a pinned account root replaces CLAUDE_CONFIG_DIR"
+  printf 'ordinary\n' >"$home/config/claude-account"
+  out=$(CLAUDE_CONFIG_DIR="$alt" dnp "$home" skills "$proj")
+  assert_equals personal-notes "$out" "an ordinary pin lists ~/.claude/skills"
+  printf 'relative/path\n' >"$home/config/claude-account"
+  dnp "$home" skills "$proj" >/dev/null 2>&1 && fail "a malformed pin was accepted"
+  chain=$(dnp "$home" new aiuse architect dev qa)
+  dnp "$home" set-role "$chain" dev --skills none-of-these
+  dnp "$home" scope "$chain" dev "$proj" >/dev/null 2>&1 && fail "scope wrote a list despite a malformed pin"
+  assert_absent "$home/data/$chain-dev/skills-off" "a malformed pin writes no scope file"
+  pass "personal skills come from the config root a worker launches with"
 }
 
 test_title_apply_per_backend() {
@@ -183,6 +248,8 @@ test_roles_catalog_and_title
 test_new_validates_orders_and_numbers
 test_latest_skips_closed_chains
 test_handoffs_track_tip_and_cap_returns
+test_only_qa_returns_consume_rounds
 test_set_role_profile_and_scope
+test_skills_follow_the_worker_config_root
 test_title_apply_per_backend
 test_report_scaffold

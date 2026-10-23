@@ -66,7 +66,8 @@ On a role's `done`, confirm with `status <chain>` that it is the active role, th
 - No blocking findings: hand off forward with `handoff <chain> <next-role> --note '<summary>'` and steer the next role with the printed tip and a pointer to the plan and the previous `handoff.md`.
 - Blocking findings: return with `handoff <chain> <fix-role> --return --note '<findings>'` to the role that owns the fix, Dev by default, and steer it with the blocking list.
   After its fix pass, hand straight back to the role that returned the work, except that a fix touching a security surface goes to DevSecOps first.
-- Exit 3 from a return means the cap of three returns is spent: do not steer anyone, file the decision as its own item with `bin/fm-tasks-axi.sh add <chain>-cap '<title>'`, hold it with `bin/fm-captain-hold.sh hold <chain>-cap --reason '<blocking findings after three returns>'`, and ask the captain whether QA should deliver with the findings listed in the report, the chain should stop, or a fresh chain should continue from the current tip.
+- Only a return issued while QA is active counts toward the cap of three rounds; a DevSecOps return to Dev, or a fix DevSecOps makes itself, consumes none.
+- Exit 3 from a QA return means the cap of three QA returns is spent: do not steer anyone, file the decision as its own item with `bin/fm-tasks-axi.sh add <chain>-cap '<title>'`, hold it with `bin/fm-captain-hold.sh hold <chain>-cap --reason '<blocking findings after three QA returns>'`, and ask the captain whether QA should deliver with the findings listed in the report, the chain should stop, or a fresh chain should continue from the current tip.
   The cap is never edited or reset inside a chain.
 - A role that reports `blocked` or `needs-decision` is handled exactly as for any ship task.
 - Append each role's cosmetic findings and one line of its actions to the chain's report sections as they arrive (`report <chain>` creates the scaffold).
